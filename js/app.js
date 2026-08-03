@@ -43,6 +43,7 @@
   let usuarioAtualId = localStorage.getItem(SESSION_KEY) || null;
   let codigoCasa = localStorage.getItem(CASA_KEY) || CASA_PADRAO;
   let mesSelecionado = state.mesAtual || state.meses[0]?.id || null;
+  let relatorioModo = "casa"; // casa | vaquinha | pendencias
   let deferredInstallPrompt = null;
   let toastTimer = null;
   let syncRef = null;
@@ -680,6 +681,7 @@
           panel.hidden = !match;
         });
         if (tab === "relatorio") renderRelatorio();
+        if (tab === "encontro") renderEncontro();
         if (tab === "config") fillConfigForm();
         if (tab === "vaquinha") renderVaquinhaUI();
         if (tab === "despesas" || tab === "mercado") fillSelectCompradores();
@@ -1104,9 +1106,11 @@
       state.pessoas.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
       saveState();
       e.target.reset();
+      renderPessoasLista();
       renderVaquinhaUI();
       fillPendenciaPessoas();
       renderLoginUI();
+      renderAdminUsuarios();
       toast(`${nome} cadastrado(a).`);
     });
 
@@ -1226,6 +1230,8 @@
     $("#filtro-mes").addEventListener("change", (e) => {
       mesSelecionado = e.target.value || null;
       renderRelatorio();
+      syncEncontroMes();
+      renderEncontro();
     });
 
     $("#btn-abrir-mes").addEventListener("click", () => {
@@ -1286,6 +1292,7 @@
       renderRelatorio();
       renderMercadoLista();
       renderDespesaLista();
+      renderEncontro();
       toast(`${labelMes(id)} aberto.`);
     });
 
@@ -1311,6 +1318,7 @@
       renderRelatorio();
       renderMercadoLista();
       renderDespesaLista();
+      renderEncontro();
       toast(`${aberto.label} fechado.`);
     });
 
@@ -1318,12 +1326,14 @@
       if (!mesSelecionado) return toast("Selecione um mês.");
       if (!mesEstaAberto(mesSelecionado)) return toast("Só é possível limpar o mês aberto.");
       const label = labelMes(mesSelecionado);
-      if (!confirm(`Apagar lançamentos de ${label}?`)) return;
+      if (!confirm(`Apagar mercado e despesas de ${label}? (Vaquinhas não são apagadas.)`)) return;
       const autor = autorMeta();
-      state.lancamentos = state.lancamentos.filter((l) => l.mesId !== mesSelecionado);
+      state.lancamentos = state.lancamentos.filter(
+        (l) => !(l.mesId === mesSelecionado && (l.tipo === "mercado" || l.tipo === "despesa"))
+      );
       notificarTodosExceto(autor.lancadoPorId, {
         titulo: "Mês limpo",
-        texto: `${autor.lancadoPorNome} limpou os lançamentos de ${label}.`,
+        texto: `${autor.lancadoPorNome} limpou mercado/despesas de ${label}.`,
         tipo: "mes",
       });
       saveState();
@@ -1331,9 +1341,12 @@
       renderRelatorio();
       renderMercadoLista();
       renderDespesaLista();
-      toast(`Lançamentos de ${label} apagados.`);
+      renderEncontro();
+      toast(`Mercado e despesas de ${label} apagados.`);
     });
 
+    initRelatorioSwitch();
+    initEncontroUI();
     initPendencias();
     initNotifUI();
   }
@@ -1895,28 +1908,17 @@
     });
   }
 
-  function renderVaquinhaUI() {
+  function renderPessoasLista() {
     const lista = $("#lista-pessoas");
     const empty = $("#empty-pessoas");
-    const boxPart = $("#vaquinha-participantes");
-    const emptyPart = $("#empty-participantes");
-    const boxCompras = $("#vaquinha-compras");
+    if (!lista) return;
 
     if (!state.pessoas.length) {
       lista.innerHTML = "";
-      empty.classList.remove("hidden");
-      boxPart.innerHTML = "";
-      emptyPart.classList.remove("hidden");
-      boxCompras.innerHTML = "";
-      $("#soma-pesos-vaquinha").textContent = "0";
-      $("#total-compras-vaquinha").textContent = formatMoney(0);
-      $("#preview-divisao").innerHTML = "";
-      updateMesStatus();
+      empty?.classList.remove("hidden");
       return;
     }
-
-    empty.classList.add("hidden");
-    emptyPart.classList.add("hidden");
+    empty?.classList.add("hidden");
 
     lista.innerHTML = state.pessoas
       .map(
@@ -1936,12 +1938,34 @@
         if (!confirm(`Remover ${pessoa?.nome}?`)) return;
         state.pessoas = state.pessoas.filter((p) => p.id !== id);
         saveState();
+        renderPessoasLista();
         renderVaquinhaUI();
         fillPendenciaPessoas();
         renderLoginUI();
+        renderAdminUsuarios();
         toast("Pessoa removida.");
       });
     });
+  }
+
+  function renderVaquinhaUI() {
+    const boxPart = $("#vaquinha-participantes");
+    const emptyPart = $("#empty-participantes");
+    const boxCompras = $("#vaquinha-compras");
+    if (!boxPart || !emptyPart || !boxCompras) return;
+
+    if (!state.pessoas.length) {
+      boxPart.innerHTML = "";
+      emptyPart.classList.remove("hidden");
+      boxCompras.innerHTML = "";
+      $("#soma-pesos-vaquinha").textContent = "0";
+      $("#total-compras-vaquinha").textContent = formatMoney(0);
+      $("#preview-divisao").innerHTML = "";
+      updateMesStatus();
+      return;
+    }
+
+    emptyPart.classList.add("hidden");
 
     const marcados = {};
     $$("#vaquinha-participantes .chk-participante").forEach((chk) => {
@@ -2101,6 +2125,7 @@
   }
 
   function fillConfigForm() {
+    renderPessoasLista();
     renderGruposConfig();
     setSyncStatus(syncStatus);
     renderTiposDespesa();
@@ -2156,6 +2181,7 @@
         state.pessoas = state.pessoas.filter((p) => p.id !== id);
         saveState();
         renderAdminUsuarios();
+        renderPessoasLista();
         renderVaquinhaUI();
         fillPendenciaPessoas();
         toast(`${pessoa.nome} removido(a).`);
@@ -2173,9 +2199,178 @@
     el.textContent = soma.toFixed(1);
   }
 
+  function calcularSaldosPessoasVaquinha(mesId) {
+    const map = {};
+    state.lancamentos
+      .filter((l) => l.tipo === "vaquinha" && l.mesId === mesId)
+      .forEach((v) => {
+        (v.participantes || []).forEach((p) => {
+          if (!map[p.pessoaId]) {
+            map[p.pessoaId] = { id: p.pessoaId, nome: p.nome, pagou: 0, cota: 0, saldo: 0 };
+          }
+          const pagou = Number(p.pagou) || 0;
+          const cota = Number(p.cota ?? p.valor) || 0;
+          const saldo = p.saldo != null ? Number(p.saldo) : pagou - cota;
+          map[p.pessoaId].pagou += pagou;
+          map[p.pessoaId].cota += cota;
+          map[p.pessoaId].saldo += saldo;
+        });
+      });
+    return Object.values(map).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }
+
+  function calcularSaldosPendenciasMes(mesId) {
+    const map = {};
+    const ensure = (id, nome) => {
+      if (!map[id]) map[id] = { id, nome: nome || "—", pagou: 0, cota: 0, saldo: 0 };
+      return map[id];
+    };
+    state.pendencias
+      .filter((p) => p.status === "pendente" && (p.data || "").slice(0, 7) === mesId)
+      .forEach((p) => {
+        const valor = Number(p.valor) || 0;
+        const credor = ensure(p.credorId, p.credorNome);
+        const devedor = ensure(p.devedorId, p.devedorNome);
+        // Credor deve receber => saldo positivo; devedor deve pagar => negativo
+        credor.saldo += valor;
+        credor.pagou += valor;
+        devedor.saldo -= valor;
+        devedor.cota += valor;
+      });
+    return Object.values(map).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }
+
+  function mergeSaldosPessoas(listas) {
+    const map = {};
+    listas.flat().forEach((s) => {
+      if (!s?.id) return;
+      if (!map[s.id]) {
+        map[s.id] = { id: s.id, nome: s.nome, pagou: 0, cota: 0, saldo: 0 };
+      }
+      map[s.id].nome = s.nome || map[s.id].nome;
+      map[s.id].pagou += Number(s.pagou) || 0;
+      map[s.id].cota += Number(s.cota) || 0;
+      map[s.id].saldo += Number(s.saldo) || 0;
+    });
+    return Object.values(map).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }
+
+  function syncEncontroMes() {
+    const sel = $("#encontro-mes");
+    if (!sel) return;
+    const prev = sel.value || mesSelecionado;
+    const ordenados = [...state.meses].sort((a, b) => b.id.localeCompare(a.id));
+    if (!ordenados.length) {
+      sel.innerHTML = `<option value="">Nenhum mês</option>`;
+      return;
+    }
+    sel.innerHTML = ordenados
+      .map((m) => {
+        const tag = m.status === "aberto" ? " (aberto)" : " (fechado)";
+        return `<option value="${m.id}">${m.label}${tag}</option>`;
+      })
+      .join("");
+    if (prev && ordenados.some((m) => m.id === prev)) sel.value = prev;
+    else if (state.mesAtual) sel.value = state.mesAtual;
+    else sel.value = ordenados[0].id;
+  }
+
+  function initRelatorioSwitch() {
+    $$(".relatorio-switch__btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        relatorioModo = btn.dataset.rel || "casa";
+        $$(".relatorio-switch__btn").forEach((b) => {
+          b.classList.toggle("is-active", b.dataset.rel === relatorioModo);
+        });
+        $("#relatorio-casa")?.classList.toggle("hidden", relatorioModo !== "casa");
+        $("#relatorio-vaquinha")?.classList.toggle("hidden", relatorioModo !== "vaquinha");
+        $("#relatorio-pendencias")?.classList.toggle("hidden", relatorioModo !== "pendencias");
+        renderRelatorio();
+      });
+    });
+  }
+
+  function initEncontroUI() {
+    ["#enc-casa", "#enc-vaquinha", "#enc-pendencias", "#encontro-mes"].forEach((sel) => {
+      $(sel)?.addEventListener("change", () => renderEncontro());
+    });
+  }
+
+  function renderEncontro() {
+    syncEncontroMes();
+    const box = $("#encontro-resultado");
+    if (!box) return;
+    const mesId = $("#encontro-mes")?.value || mesSelecionado;
+    if (!mesId) {
+      box.innerHTML = `<div class="card-resumo"><p class="card-resumo__label">Encontro</p><p class="card-resumo__meta" style="opacity:1;margin-top:0.35rem">Selecione um mês.</p></div>`;
+      return;
+    }
+
+    const useCasa = $("#enc-casa")?.checked;
+    const useVaq = $("#enc-vaquinha")?.checked;
+    const usePend = $("#enc-pendencias")?.checked;
+    if (!useCasa && !useVaq && !usePend) {
+      box.innerHTML = `<div class="card-resumo"><p class="card-resumo__label">Encontro</p><p class="card-resumo__meta" style="opacity:1;margin-top:0.35rem">Marque ao menos uma origem.</p></div>`;
+      return;
+    }
+
+    const partes = [];
+    partes.push(`
+      <div class="card-resumo card-resumo--total">
+        <p class="card-resumo__label">Encontro — ${escapeHtml(labelMes(mesId))}</p>
+        <p class="card-resumo__meta">${[
+          useCasa ? "Mercado+Despesas" : null,
+          useVaq ? "Vaquinha" : null,
+          usePend ? "Entre nós" : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}</p>
+      </div>`);
+
+    if (useCasa) {
+      const casa = state.lancamentos.filter(
+        (l) => l.mesId === mesId && (l.tipo === "mercado" || l.tipo === "despesa")
+      );
+      const saldos = calcularSaldosGrupos(casa);
+      const transfers = calcularTransferencias(saldos);
+      partes.push(
+        htmlBlocoAcerto({
+          titulo: "1) Grupos da casa (mercado + despesas)",
+          meta: "Transferências entre grupos.",
+          saldos,
+          transfers,
+          vazio: !casa.length,
+        })
+      );
+    }
+
+    if (useVaq || usePend) {
+      const listas = [];
+      if (useVaq) listas.push(calcularSaldosPessoasVaquinha(mesId));
+      if (usePend) listas.push(calcularSaldosPendenciasMes(mesId));
+      const saldosP = mergeSaldosPessoas(listas);
+      const transfersP = calcularTransferencias(saldosP);
+      const fontes = [useVaq ? "vaquinha" : null, usePend ? "entre nós" : null]
+        .filter(Boolean)
+        .join(" + ");
+      partes.push(
+        htmlBlocoAcerto({
+          titulo: `2) Pessoas (${fontes})`,
+          meta: "Transferências entre usuários para fechar o encontro.",
+          saldos: saldosP,
+          transfers: transfersP,
+          vazio: !saldosP.length,
+        })
+      );
+    }
+
+    box.innerHTML = partes.join("");
+  }
+
   /* ---------- Relatório ---------- */
   function renderRelatorio() {
     fillFiltroMes();
+    syncEncontroMes();
     updateMesStatus();
 
     const mes = mesSelecionado ? getMes(mesSelecionado) : null;
@@ -2191,17 +2386,33 @@
       badge.className = "badge badge--fechado";
     }
 
+    $("#relatorio-casa")?.classList.toggle("hidden", relatorioModo !== "casa");
+    $("#relatorio-vaquinha")?.classList.toggle("hidden", relatorioModo !== "vaquinha");
+    $("#relatorio-pendencias")?.classList.toggle("hidden", relatorioModo !== "pendencias");
+    $$(".relatorio-switch__btn").forEach((b) => {
+      b.classList.toggle("is-active", b.dataset.rel === relatorioModo);
+    });
+
+    if (relatorioModo === "vaquinha") {
+      renderRelatorioVaquinha();
+      return;
+    }
+    if (relatorioModo === "pendencias") {
+      renderRelatorioPendencias();
+      return;
+    }
+    renderRelatorioCasa();
+  }
+
+  function renderRelatorioCasa() {
     const items = state.lancamentos
-      .filter((l) => l.mesId === mesSelecionado)
+      .filter((l) => l.mesId === mesSelecionado && (l.tipo === "mercado" || l.tipo === "despesa"))
       .sort((a, b) => {
         if (a.data === b.data) return (b.criadoEm || "").localeCompare(a.criadoEm || "");
         return b.data.localeCompare(a.data);
       });
 
-    const casa = items.filter((l) => l.tipo === "mercado" || l.tipo === "despesa");
-    const vaquinhas = items.filter((l) => l.tipo === "vaquinha");
-
-    const totais = casa.reduce(
+    const totais = items.reduce(
       (acc, item) => {
         acc.geral += item.valor;
         (state.grupos || []).forEach((g) => {
@@ -2212,29 +2423,13 @@
       { geral: 0 }
     );
 
-    const totalVaquinhas = vaquinhas.reduce((acc, item) => acc + item.valor, 0);
-    const porPessoa = {};
-    vaquinhas.forEach((v) => {
-      (v.participantes || []).forEach((p) => {
-        if (!porPessoa[p.pessoaId]) {
-          porPessoa[p.pessoaId] = { nome: p.nome, saldo: 0, cota: 0, pagou: 0 };
-        }
-        porPessoa[p.pessoaId].saldo += p.saldo ?? (p.pagou || 0) - (p.cota ?? p.valor ?? 0);
-        porPessoa[p.pessoaId].cota += p.cota ?? p.valor ?? 0;
-        porPessoa[p.pessoaId].pagou += p.pagou || 0;
-      });
-    });
-    const listaPessoasVaq = Object.values(porPessoa).sort((a, b) =>
-      a.nome.localeCompare(b.nome, "pt-BR")
-    );
-
     const soma = somaPesos();
-    const tituloMes = mes ? mes.label : "Nenhum mês";
+    const tituloMes = mesSelecionado ? labelMes(mesSelecionado) : "Nenhum mês";
     $("#resumo-cards").innerHTML = `
       <div class="card-resumo card-resumo--total">
         <p class="card-resumo__label">Mercado + Despesas — ${escapeHtml(tituloMes)}</p>
         <p class="card-resumo__valor">${formatMoney(totais.geral)}</p>
-        <p class="card-resumo__meta">${casa.length} lançamento(s) · pesos ${soma.toFixed(1)}</p>
+        <p class="card-resumo__meta">${items.length} lançamento(s) · pesos ${soma.toFixed(1)}</p>
       </div>
       <div class="grupos-grid">
         ${(state.grupos || [])
@@ -2253,42 +2448,17 @@
 
     const acertoBox = $("#resumo-acerto");
     if (acertoBox) {
-      const saldos = calcularSaldosGrupos(casa);
+      const saldos = calcularSaldosGrupos(items);
       const transfers = calcularTransferencias(saldos);
       acertoBox.innerHTML = htmlBlocoAcerto({
         titulo: `Acerto — ${tituloMes}`,
-        meta: casa.length
-          ? "Somente mercado e despesas. Vaquinha e Entre nós ficam separados."
+        meta: items.length
+          ? "Somente mercado e despesas."
           : "Sem lançamentos de mercado/despesa.",
         saldos,
         transfers,
-        vazio: !casa.length,
+        vazio: !items.length,
       });
-    }
-
-    const resumoVaq = $("#resumo-vaquinhas");
-    if (vaquinhas.length) {
-      resumoVaq.innerHTML = `
-        <div class="card-resumo">
-          <p class="card-resumo__label">Vaquinhas (separado) — ${escapeHtml(tituloMes)}</p>
-          <p class="card-resumo__valor" style="color:var(--brand)">${formatMoney(totalVaquinhas)}</p>
-          <p class="card-resumo__meta">${vaquinhas.length} vaquinha(s) · não entra no acerto da casa</p>
-        </div>
-        <div class="grupos-grid">
-          ${listaPessoasVaq
-            .map((p) => {
-              const s = textoSaldo(p.saldo);
-              return `
-            <div class="card-grupo">
-              <p class="card-grupo__nome">${escapeHtml(p.nome)}</p>
-              <p class="card-grupo__valor ${s.classe}">${s.texto}</p>
-              <p class="card-grupo__peso">Cota ${formatMoney(p.cota)} · Pagou ${formatMoney(p.pagou)}</p>
-            </div>`;
-            })
-            .join("")}
-        </div>`;
-    } else {
-      resumoVaq.innerHTML = "";
     }
 
     $("#lancamentos-count").textContent = `${items.length} ite${items.length === 1 ? "m" : "ns"}`;
@@ -2307,23 +2477,14 @@
       .map((item) => {
         let tipoBadge = `<span class="badge">Despesa</span>`;
         if (item.tipo === "mercado") tipoBadge = `<span class="badge badge--mercado">Mercado</span>`;
-        if (item.tipo === "vaquinha") tipoBadge = `<span class="badge badge--vaquinha">Vaquinha</span>`;
 
         let detalhe = "";
         if (item.tipo === "mercado") {
           detalhe = `${escapeHtml(labelComprador(item.comprador))}<br><span class="detalhe">${PAGAMENTOS[item.pagamento] || item.pagamento}</span>`;
-        } else if (item.tipo === "vaquinha") {
-          const comprasTxt = (item.compras || []).map((c) => `${escapeHtml(c.nome)} ${formatMoney(c.valor)}`).join(" · ");
-          const parts = (item.participantes || [])
-            .map((p) => `${escapeHtml(p.nome)}: ${textoSaldo(p.saldo ?? 0).texto}`)
-            .join("<br>");
-          detalhe = `${escapeHtml(item.descricao)}<br><span class="detalhe">Compras: ${comprasTxt || "—"}</span><br>${parts}`;
         } else {
           const crit = item.criterio === "igual_3" ? "Partes iguais" : "Proporcional";
           const quem = item.comprador ? labelComprador(item.comprador) : null;
-          const pag = item.pagamento
-            ? PAGAMENTOS[item.pagamento] || item.pagamento
-            : null;
+          const pag = item.pagamento ? PAGAMENTOS[item.pagamento] || item.pagamento : null;
           const extra = [quem, pag].filter(Boolean).join(" · ");
           detalhe = `${escapeHtml(item.descricao)}<br><span class="detalhe">${crit}${extra ? ` · ${escapeHtml(extra)}` : ""}</span>`;
         }
@@ -2362,9 +2523,114 @@
         renderRelatorio();
         renderMercadoLista();
         renderDespesaLista();
+        renderEncontro();
         toast("Excluído.");
       });
     });
+  }
+
+  function renderRelatorioVaquinha() {
+    const vaquinhas = state.lancamentos
+      .filter((l) => l.tipo === "vaquinha" && l.mesId === mesSelecionado)
+      .sort((a, b) => b.data.localeCompare(a.data));
+    const saldos = calcularSaldosPessoasVaquinha(mesSelecionado);
+    const transfers = calcularTransferencias(saldos);
+    const total = vaquinhas.reduce((acc, v) => acc + (Number(v.valor) || 0), 0);
+    const tituloMes = mesSelecionado ? labelMes(mesSelecionado) : "Nenhum mês";
+
+    $("#resumo-vaquinhas").innerHTML =
+      `
+      <div class="card-resumo">
+        <p class="card-resumo__label">Vaquinhas — ${escapeHtml(tituloMes)}</p>
+        <p class="card-resumo__valor" style="color:var(--brand)">${formatMoney(total)}</p>
+        <p class="card-resumo__meta">${vaquinhas.length} vaquinha(s)</p>
+      </div>` +
+      htmlBlocoAcerto({
+        titulo: "Acerto das vaquinhas",
+        meta: "Quem passa pra quem só nas vaquinhas deste mês.",
+        saldos,
+        transfers,
+        vazio: !vaquinhas.length,
+        mostrarCabecalho: false,
+      });
+
+    $("#vaquinhas-rel-count").textContent = String(vaquinhas.length);
+    const lista = $("#lista-rel-vaquinhas");
+    const empty = $("#empty-rel-vaquinhas");
+    if (!vaquinhas.length) {
+      lista.innerHTML = "";
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+    lista.innerHTML = vaquinhas
+      .map((v) => {
+        const parts = (v.participantes || [])
+          .map((p) => `${escapeHtml(p.nome)}: ${textoSaldo(p.saldo ?? 0).texto}`)
+          .join(" · ");
+        return `
+      <article class="mercado-item">
+        <div>
+          <p class="mercado-item__meta">${formatDate(v.data)}</p>
+          <p class="mercado-item__detalhe">${escapeHtml(v.descricao)}</p>
+          <p class="mercado-item__por" style="margin-top:0.25rem">${parts || "—"}</p>
+        </div>
+        <p class="mercado-item__valor">${formatMoney(v.valor)}</p>
+      </article>`;
+      })
+      .join("");
+  }
+
+  function renderRelatorioPendencias() {
+    const mesId = mesSelecionado;
+    const items = state.pendencias
+      .filter((p) => (p.data || "").slice(0, 7) === mesId)
+      .sort((a, b) => (b.data || "").localeCompare(a.data || ""));
+    const abertas = items.filter((p) => p.status === "pendente");
+    const saldos = calcularSaldosPendenciasMes(mesId);
+    const transfers = calcularTransferencias(saldos);
+    const total = abertas.reduce((acc, p) => acc + (Number(p.valor) || 0), 0);
+    const tituloMes = mesId ? labelMes(mesId) : "Nenhum mês";
+
+    $("#resumo-rel-pendencias").innerHTML =
+      `
+      <div class="card-resumo">
+        <p class="card-resumo__label">Entre nós — ${escapeHtml(tituloMes)}</p>
+        <p class="card-resumo__valor">${formatMoney(total)}</p>
+        <p class="card-resumo__meta">${abertas.length} aberta(s) · ${items.length} no mês</p>
+      </div>` +
+      htmlBlocoAcerto({
+        titulo: "Acerto entre nós",
+        meta: "Pendências abertas com data neste mês.",
+        saldos,
+        transfers,
+        vazio: !abertas.length,
+        mostrarCabecalho: false,
+      });
+
+    $("#pendencias-rel-count").textContent = String(items.length);
+    const lista = $("#lista-rel-pendencias");
+    const empty = $("#empty-rel-pendencias");
+    if (!items.length) {
+      lista.innerHTML = "";
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+    lista.innerHTML = items
+      .map((p) => {
+        const status = p.status === "pago" ? "Pago" : "Pendente";
+        return `
+      <article class="mercado-item">
+        <div>
+          <p class="mercado-item__meta">${formatDate(p.data)} · ${status}</p>
+          <p class="mercado-item__detalhe">${escapeHtml(p.descricao)}</p>
+          <p class="mercado-item__por" style="margin-top:0.25rem">${escapeHtml(p.devedorNome)} → ${escapeHtml(p.credorNome)}</p>
+        </div>
+        <p class="mercado-item__valor">${formatMoney(p.valor)}</p>
+      </article>`;
+      })
+      .join("");
   }
 
   /* ---------- PWA ---------- */

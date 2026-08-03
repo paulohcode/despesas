@@ -69,6 +69,7 @@
       <button type="button" class="nav__btn" data-tab="vaquinha" role="tab" aria-selected="false">Vaquinha</button>
       <button type="button" class="nav__btn" data-tab="pendencias" role="tab" aria-selected="false">Entre nós</button>
       <button type="button" class="nav__btn" data-tab="relatorio" role="tab" aria-selected="false">Relatório</button>
+      <button type="button" class="nav__btn" data-tab="encontro" role="tab" aria-selected="false">Encontro</button>
       <button type="button" class="nav__btn" data-tab="config" role="tab" aria-selected="false">Config</button>
     </nav>
 
@@ -177,27 +178,10 @@
       <!-- Vaquinha -->
       <section id="tab-vaquinha" class="panel" role="tabpanel" hidden>
         <h2 class="panel__title">Vaquinha</h2>
-        <p class="panel__hint">Despesas avulsas divididas entre pessoas (fora da divisão da casa).</p>
-
-        <form id="form-pessoa" class="form" autocomplete="off">
-          <fieldset class="fieldset">
-            <legend class="fieldset__legend">Cadastro de pessoas</legend>
-            <p class="fieldset__hint">Mesmo cadastro do login — use para vaquinhas e pendências.</p>
-            <div class="row-add">
-              <label class="field field--grow">
-                <span class="field__label">Nome</span>
-                <input type="text" id="pessoa-nome" name="nome" placeholder="Ex: João, Ana, Carlos" required />
-              </label>
-              <button type="submit" class="btn btn--secondary btn-add-pessoa">Adicionar</button>
-            </div>
-            <ul id="lista-pessoas" class="lista-pessoas"></ul>
-            <p id="empty-pessoas" class="empty empty--sm hidden">Nenhuma pessoa cadastrada.</p>
-          </fieldset>
-        </form>
-
+        <p class="panel__hint">Despesas avulsas entre pessoas. Cadastre usuários em Config.</p>
         <p id="aviso-vaquinha" class="aviso hidden">Abra um mês para lançar vaquinhas.</p>
 
-        <form id="form-vaquinha" class="form form--spaced" autocomplete="off">
+        <form id="form-vaquinha" class="form" autocomplete="off">
           <fieldset class="fieldset">
             <legend class="fieldset__legend">Nova vaquinha</legend>
             <p class="fieldset__hint">Várias pessoas podem comprar; o acerto mostra quem recebe ou paga.</p>
@@ -220,7 +204,7 @@
             <div class="field">
               <span class="field__label">Participantes e pesos (1 a 4)</span>
               <div id="vaquinha-participantes" class="participantes"></div>
-              <p id="empty-participantes" class="empty empty--sm">Cadastre pessoas acima para selecioná-las.</p>
+              <p id="empty-participantes" class="empty empty--sm">Cadastre pessoas em Config para selecioná-las.</p>
               <p class="peso-total">Soma dos pesos: <strong id="soma-pesos-vaquinha">0</strong></p>
             </div>
             <div id="preview-divisao" class="preview-divisao"></div>
@@ -278,7 +262,8 @@
 
       <!-- Relatório -->
       <section id="tab-relatorio" class="panel" role="tabpanel" hidden>
-        <h2 class="panel__title">Relatório / Resumo</h2>
+        <h2 class="panel__title">Relatórios</h2>
+        <p class="panel__hint">Consulte cada tipo separado. Para juntar tudo, use a aba Encontro.</p>
 
         <div class="mes-painel form">
           <div class="mes-painel__head">
@@ -296,40 +281,112 @@
           <p id="hint-mes-admin" class="fieldset__hint">Somente Paulo (admin) pode abrir e fechar o mês.</p>
         </div>
 
-        <div id="resumo-cards" class="resumo"></div>
-        <div id="resumo-acerto" class="resumo"></div>
-        <div id="resumo-vaquinhas" class="resumo"></div>
-
-        <div class="section-head">
-          <h3 class="section-head__title">Lançamentos</h3>
-          <span id="lancamentos-count" class="section-head__meta">0 itens</span>
+        <div class="relatorio-switch" role="tablist" aria-label="Tipo de relatório">
+          <button type="button" class="relatorio-switch__btn is-active" data-rel="casa">Mercado + Despesas</button>
+          <button type="button" class="relatorio-switch__btn" data-rel="vaquinha">Vaquinha</button>
+          <button type="button" class="relatorio-switch__btn" data-rel="pendencias">Entre nós</button>
         </div>
 
-        <div class="table-wrap">
-          <table class="table" id="tabela-lancamentos">
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>Tipo</th>
-                <th>Detalhe</th>
-                <th>Valor</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="tbody-lancamentos"></tbody>
-          </table>
-          <p id="empty-lancamentos" class="empty hidden">Nenhum lançamento neste mês.</p>
+        <div id="relatorio-casa" class="relatorio-bloco">
+          <div id="resumo-cards" class="resumo"></div>
+          <div id="resumo-acerto" class="resumo"></div>
+          <div class="section-head">
+            <h3 class="section-head__title">Lançamentos</h3>
+            <span id="lancamentos-count" class="section-head__meta">0 itens</span>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="tabela-lancamentos">
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Tipo</th>
+                  <th>Detalhe</th>
+                  <th>Valor</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="tbody-lancamentos"></tbody>
+            </table>
+            <p id="empty-lancamentos" class="empty hidden">Nenhum lançamento neste mês.</p>
+          </div>
+          <button type="button" id="btn-limpar" class="btn btn--danger btn--block">
+            Limpar mercado e despesas do mês
+          </button>
         </div>
 
-        <button type="button" id="btn-limpar" class="btn btn--danger btn--block">
-          Limpar lançamentos do mês selecionado
-        </button>
+        <div id="relatorio-vaquinha" class="relatorio-bloco hidden">
+          <div id="resumo-vaquinhas" class="resumo"></div>
+          <div class="section-head">
+            <h3 class="section-head__title">Vaquinhas do mês</h3>
+            <span id="vaquinhas-rel-count" class="section-head__meta">0</span>
+          </div>
+          <div id="lista-rel-vaquinhas" class="lista-mercado"></div>
+          <p id="empty-rel-vaquinhas" class="empty empty--sm hidden">Nenhuma vaquinha neste mês.</p>
+        </div>
+
+        <div id="relatorio-pendencias" class="relatorio-bloco hidden">
+          <div id="resumo-rel-pendencias" class="resumo"></div>
+          <div class="section-head">
+            <h3 class="section-head__title">Pendências do mês</h3>
+            <span id="pendencias-rel-count" class="section-head__meta">0</span>
+          </div>
+          <div id="lista-rel-pendencias" class="lista-mercado"></div>
+          <p id="empty-rel-pendencias" class="empty empty--sm hidden">Nenhuma pendência com data neste mês.</p>
+        </div>
+      </section>
+
+      <!-- Encontro de contas -->
+      <section id="tab-encontro" class="panel" role="tabpanel" hidden>
+        <h2 class="panel__title">Encontro de contas</h2>
+        <p class="panel__hint">Escolha o que entrar no acerto e veja as transferências para fechar tudo de uma vez.</p>
+
+        <div class="form">
+          <label class="field">
+            <span class="field__label">Mês de referência</span>
+            <select id="encontro-mes"></select>
+          </label>
+
+          <fieldset class="fieldset">
+            <legend class="fieldset__legend">Incluir no encontro</legend>
+            <p class="fieldset__hint">Mercado/despesas acertam entre grupos; vaquinha e entre nós entre pessoas.</p>
+            <label class="encontro-check">
+              <input type="checkbox" id="enc-casa" checked />
+              <span>Mercado + Despesas</span>
+            </label>
+            <label class="encontro-check">
+              <input type="checkbox" id="enc-vaquinha" checked />
+              <span>Vaquinha</span>
+            </label>
+            <label class="encontro-check">
+              <input type="checkbox" id="enc-pendencias" checked />
+              <span>Entre nós (pendências abertas do mês)</span>
+            </label>
+          </fieldset>
+        </div>
+
+        <div id="encontro-resultado" class="resumo" style="margin-top:1rem"></div>
       </section>
 
       <!-- Config -->
       <section id="tab-config" class="panel" role="tabpanel" hidden>
         <h2 class="panel__title">Configurações</h2>
-        <p class="panel__hint">Grupos, tipos de despesa e sincronização online.</p>
+        <p class="panel__hint">Usuários, grupos, tipos de despesa e sincronização.</p>
+
+        <form id="form-pessoa" class="form" style="margin-bottom:1.25rem" autocomplete="off">
+          <fieldset class="fieldset">
+            <legend class="fieldset__legend">Cadastro de pessoas / usuários</legend>
+            <p class="fieldset__hint">Mesmo cadastro do login — usado em vaquinhas, entre nós e encontro.</p>
+            <div class="row-add">
+              <label class="field field--grow">
+                <span class="field__label">Nome</span>
+                <input type="text" id="pessoa-nome" name="nome" placeholder="Ex: João, Ana, Carlos" required />
+              </label>
+              <button type="submit" class="btn btn--secondary btn-add-pessoa">Adicionar</button>
+            </div>
+            <ul id="lista-pessoas" class="lista-pessoas"></ul>
+            <p id="empty-pessoas" class="empty empty--sm hidden">Nenhuma pessoa cadastrada.</p>
+          </fieldset>
+        </form>
 
         <form id="form-grupos" class="form" style="margin-bottom:1.25rem" autocomplete="off">
           <fieldset class="fieldset">
