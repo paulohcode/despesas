@@ -1758,7 +1758,7 @@
     Object.values(map).forEach((g) => {
       g.saldo = g.pagou - g.cota;
     });
-    return Object.values(map);
+    return filtrarSaldosAtivos(Object.values(map));
   }
 
   /** Minimiza transferências: quem está negativo paga quem está positivo. */
@@ -1798,7 +1798,10 @@
   }
 
   function htmlBlocoAcerto({ titulo, meta, saldos, transfers, vazio, mostrarCabecalho = true }) {
-    if (vazio) {
+    const saldosAtivos = filtrarSaldosAtivos(saldos);
+    const transfersAtivas = (transfers || []).filter((t) => Number(t.valor) > 0.005);
+
+    if (vazio || (!saldosAtivos.length && !transfersAtivas.length)) {
       return `
         <div class="card-resumo">
           <p class="card-resumo__label">${escapeHtml(titulo)}</p>
@@ -1814,9 +1817,10 @@
       </div>`
       : "";
 
-    const saldosHtml = `
+    const saldosHtml = saldosAtivos.length
+      ? `
       <div class="grupos-grid">
-        ${saldos
+        ${saldosAtivos
           .map((s) => {
             const t = textoSaldo(s.saldo);
             return `
@@ -1827,13 +1831,14 @@
           </div>`;
           })
           .join("")}
-      </div>`;
+      </div>`
+      : "";
 
-    const transfersHtml = transfers.length
+    const transfersHtml = transfersAtivas.length
       ? `
       <div class="acerto-lista">
         <p class="acerto-lista__titulo">Quem passa pra quem</p>
-        ${transfers
+        ${transfersAtivas
           .map(
             (t) => `
           <div class="acerto-item">
@@ -2199,29 +2204,54 @@
     el.textContent = soma.toFixed(1);
   }
 
+  function filtrarSaldosAtivos(saldos) {
+    return (saldos || []).filter((s) => {
+      if (!s?.id) return false;
+      return (
+        Math.abs(Number(s.saldo) || 0) > 0.005 ||
+        Math.abs(Number(s.pagou) || 0) > 0.005 ||
+        Math.abs(Number(s.cota) || 0) > 0.005
+      );
+    });
+  }
+
   function calcularSaldosPessoasVaquinha(mesId) {
     const map = {};
     state.lancamentos
       .filter((l) => l.tipo === "vaquinha" && l.mesId === mesId)
       .forEach((v) => {
-        (v.participantes || []).forEach((p) => {
+        const migrada = migrarVaquinha(v);
+        const compras = Array.isArray(migrada.compras) ? migrada.compras : [];
+        const base = (migrada.participantes || [])
+          .map((p) => ({
+            pessoaId: p.pessoaId,
+            nome: p.nome,
+            peso: Number(p.peso) || 1,
+          }))
+          .filter((p) => p.pessoaId);
+        // Sem compras válidas, ignora (evita saldo fantasma guardado no JSON)
+        if (!compras.length || !base.length) return;
+
+        calcularAcerto(compras, base).forEach((p) => {
           if (!map[p.pessoaId]) {
             map[p.pessoaId] = { id: p.pessoaId, nome: p.nome, pagou: 0, cota: 0, saldo: 0 };
           }
-          const pagou = Number(p.pagou) || 0;
-          const cota = Number(p.cota ?? p.valor) || 0;
-          const saldo = p.saldo != null ? Number(p.saldo) : pagou - cota;
-          map[p.pessoaId].pagou += pagou;
-          map[p.pessoaId].cota += cota;
-          map[p.pessoaId].saldo += saldo;
+          map[p.pessoaId].nome = p.nome || map[p.pessoaId].nome;
+          map[p.pessoaId].pagou += Number(p.pagou) || 0;
+          map[p.pessoaId].cota += Number(p.cota) || 0;
+          map[p.pessoaId].saldo += Number(p.saldo) || 0;
         });
       });
-    return Object.values(map).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+
+    return filtrarSaldosAtivos(Object.values(map)).sort((a, b) =>
+      a.nome.localeCompare(b.nome, "pt-BR")
+    );
   }
 
   function calcularSaldosPendenciasMes(mesId) {
     const map = {};
     const ensure = (id, nome) => {
+      if (!id) return null;
       if (!map[id]) map[id] = { id, nome: nome || "—", pagou: 0, cota: 0, saldo: 0 };
       return map[id];
     };
@@ -2229,15 +2259,19 @@
       .filter((p) => p.status === "pendente" && (p.data || "").slice(0, 7) === mesId)
       .forEach((p) => {
         const valor = Number(p.valor) || 0;
+        if (!(valor > 0)) return;
         const credor = ensure(p.credorId, p.credorNome);
         const devedor = ensure(p.devedorId, p.devedorNome);
+        if (!credor || !devedor || credor.id === devedor.id) return;
         // Credor deve receber => saldo positivo; devedor deve pagar => negativo
         credor.saldo += valor;
         credor.pagou += valor;
         devedor.saldo -= valor;
         devedor.cota += valor;
       });
-    return Object.values(map).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    return filtrarSaldosAtivos(Object.values(map)).sort((a, b) =>
+      a.nome.localeCompare(b.nome, "pt-BR")
+    );
   }
 
   function mergeSaldosPessoas(listas) {
@@ -2252,7 +2286,9 @@
       map[s.id].cota += Number(s.cota) || 0;
       map[s.id].saldo += Number(s.saldo) || 0;
     });
-    return Object.values(map).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    return filtrarSaldosAtivos(Object.values(map)).sort((a, b) =>
+      a.nome.localeCompare(b.nome, "pt-BR")
+    );
   }
 
   function syncEncontroMes() {
