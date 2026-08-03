@@ -24,14 +24,20 @@
       <div class="login__brand">
         <span class="header__mark" aria-hidden="true"></span>
         <h1 class="login__title">Despesas</h1>
-        <p class="login__hint">Digite seu nome para entrar. Os dados da família sincronizam automaticamente.</p>
+        <p class="login__hint">Escolha seu usuário cadastrado. Somente o admin (Paulo) cadastra novas pessoas em Config.</p>
       </div>
       <form id="form-login" class="form" autocomplete="off">
         <input type="hidden" id="login-casa" value="familia-silva" />
-        <label class="field">
-          <span class="field__label">Seu nome</span>
-          <input type="text" id="login-nome" list="lista-usuarios-login" placeholder="Ex: Paulo, John…" required autofocus />
-          <datalist id="lista-usuarios-login"></datalist>
+        <label class="field" id="login-campo-usuario">
+          <span class="field__label">Seu usuário</span>
+          <select id="login-usuario" required>
+            <option value="">Selecione…</option>
+          </select>
+        </label>
+        <label class="field hidden" id="login-campo-admin">
+          <span class="field__label">Primeiro acesso (admin)</span>
+          <input type="text" id="login-nome-admin" placeholder="Nome do admin" autocomplete="username" />
+          <span class="fieldset__hint">Ainda não há usuários. Entre com o nome do admin para cadastrar os demais.</span>
         </label>
         <button type="submit" class="btn btn--primary btn--block">Entrar</button>
       </form>
@@ -178,7 +184,7 @@
       <!-- Vaquinha -->
       <section id="tab-vaquinha" class="panel" role="tabpanel" hidden>
         <h2 class="panel__title">Vaquinha</h2>
-        <p class="panel__hint">Despesas avulsas entre pessoas. Cadastre usuários em Config.</p>
+        <p class="panel__hint">Despesas avulsas entre pessoas. Usuários são cadastrados pelo admin em Config.</p>
         <p id="aviso-vaquinha" class="aviso hidden">Abra um mês para lançar vaquinhas.</p>
 
         <form id="form-vaquinha" class="form" autocomplete="off">
@@ -204,7 +210,7 @@
             <div class="field">
               <span class="field__label">Participantes e pesos (1 a 4)</span>
               <div id="vaquinha-participantes" class="participantes"></div>
-              <p id="empty-participantes" class="empty empty--sm">Cadastre pessoas em Config para selecioná-las.</p>
+              <p id="empty-participantes" class="empty empty--sm">Peça ao admin para cadastrar usuários em Config.</p>
               <p class="peso-total">Soma dos pesos: <strong id="soma-pesos-vaquinha">0</strong></p>
             </div>
             <div id="preview-divisao" class="preview-divisao"></div>
@@ -372,10 +378,10 @@
         <h2 class="panel__title">Configurações</h2>
         <p class="panel__hint">Usuários, grupos, tipos de despesa e sincronização.</p>
 
-        <form id="form-pessoa" class="form" style="margin-bottom:1.25rem" autocomplete="off">
+        <form id="form-pessoa" class="form hidden" style="margin-bottom:1.25rem" autocomplete="off">
           <fieldset class="fieldset">
-            <legend class="fieldset__legend">Cadastro de pessoas / usuários</legend>
-            <p class="fieldset__hint">Mesmo cadastro do login — usado em vaquinhas, entre nós e encontro.</p>
+            <legend class="fieldset__legend">Cadastro de usuários</legend>
+            <p class="fieldset__hint">Somente o admin pode cadastrar. Esses nomes aparecem no login, vaquinhas, entre nós e encontro.</p>
             <div class="row-add">
               <label class="field field--grow">
                 <span class="field__label">Nome</span>
@@ -431,14 +437,6 @@
           </fieldset>
         </div>
 
-        <div id="admin-usuarios" class="form form--spaced hidden">
-          <fieldset class="fieldset">
-            <legend class="fieldset__legend">Usuários cadastrados</legend>
-            <p class="fieldset__hint">Visível somente para o admin (Paulo).</p>
-            <ul id="lista-usuarios-admin" class="lista-pessoas"></ul>
-            <p id="empty-usuarios-admin" class="empty empty--sm hidden">Nenhum usuário cadastrado.</p>
-          </fieldset>
-        </div>
       </section>
     </main>
   </div>

@@ -284,8 +284,15 @@
       updatedAt: remoteAt || Date.now(),
     };
     state.lancamentos = state.lancamentos.map((l) => migrarVaquinha(l));
-    lastRemoteUpdatedAt = state.updatedAt;
+    const pendenciasReparadas = normalizarPendenciasIds();
+    if (pendenciasReparadas) state.updatedAt = Date.now();
+    lastRemoteUpdatedAt = remoteAt || state.updatedAt;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (pendenciasReparadas) {
+      setTimeout(() => {
+        if (!applyingRemote) schedulePush();
+      }, 0);
+    }
 
     if (!mesSelecionado || !state.meses.some((m) => m.id === mesSelecionado)) {
       mesSelecionado = state.mesAtual || state.meses[0]?.id || null;
@@ -503,6 +510,62 @@
     return state.pessoas.find((p) => p.id === usuarioAtualId) || null;
   }
 
+  /** Resolve pessoa por id; se o id sumiu (recadastro), tenta pelo nome. */
+  function acharPessoaPorIdOuNome(id, nome) {
+    if (id) {
+      const byId = state.pessoas.find((p) => p.id === id);
+      if (byId) return byId;
+    }
+    const n = String(nome || "")
+      .trim()
+      .toLowerCase();
+    if (!n) return null;
+    return state.pessoas.find((p) => p.nome.trim().toLowerCase() === n) || null;
+  }
+
+  /** Reata IDs de pendências a pessoas atuais (evita “fantasma” no relatório). */
+  function normalizarPendenciasIds() {
+    let mudou = false;
+    (state.pendencias || []).forEach((p) => {
+      const credor = acharPessoaPorIdOuNome(p.credorId, p.credorNome);
+      if (credor && (p.credorId !== credor.id || p.credorNome !== credor.nome)) {
+        p.credorId = credor.id;
+        p.credorNome = credor.nome;
+        mudou = true;
+      }
+      const devedor = acharPessoaPorIdOuNome(p.devedorId, p.devedorNome);
+      if (devedor && (p.devedorId !== devedor.id || p.devedorNome !== devedor.nome)) {
+        p.devedorId = devedor.id;
+        p.devedorNome = devedor.nome;
+        mudou = true;
+      }
+      const criador = acharPessoaPorIdOuNome(p.criadoPorId, p.criadoPorNome);
+      if (criador && p.criadoPorId !== criador.id) {
+        p.criadoPorId = criador.id;
+        p.criadoPorNome = criador.nome;
+        mudou = true;
+      }
+    });
+    return mudou;
+  }
+
+  function usuarioNaPendencia(p, u) {
+    if (!p || !u) return false;
+    if (p.credorId === u.id || p.devedorId === u.id) return true;
+    const n = u.nome.trim().toLowerCase();
+    return (
+      String(p.credorNome || "").trim().toLowerCase() === n ||
+      String(p.devedorNome || "").trim().toLowerCase() === n
+    );
+  }
+
+  function souCredorDaPendencia(p, u) {
+    if (!p || !u) return false;
+    if (p.credorId === u.id) return true;
+    if (p.devedorId === u.id) return false;
+    return String(p.credorNome || "").trim().toLowerCase() === u.nome.trim().toLowerCase();
+  }
+
   function isAdmin() {
     const u = usuarioAtual();
     if (!u?.nome) return false;
@@ -594,16 +657,23 @@
   }
 
   /* ---------- Login ---------- */
-  function ensurePessoaByNome(nomeRaw) {
-    const nome = nomeRaw.trim().replace(/\s+/g, " ");
+  function buscarPessoaCadastrada(nomeRaw) {
+    const nome = String(nomeRaw || "")
+      .trim()
+      .replace(/\s+/g, " ");
     if (!nome) return null;
-    let pessoa = state.pessoas.find((p) => p.nome.toLowerCase() === nome.toLowerCase());
-    if (!pessoa) {
-      pessoa = { id: uid(), nome };
-      state.pessoas.push(pessoa);
-      state.pessoas.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-      saveState();
-    }
+    return state.pessoas.find((p) => p.nome.toLowerCase() === nome.toLowerCase()) || null;
+  }
+
+  function bootstrapAdminSeVazio(nomeRaw) {
+    if (state.pessoas.length) return null;
+    const nome = String(nomeRaw || "")
+      .trim()
+      .replace(/\s+/g, " ");
+    if (!nome || nome.toLowerCase() !== ADMIN_NOME) return null;
+    const pessoa = { id: uid(), nome };
+    state.pessoas.push(pessoa);
+    saveState();
     return pessoa;
   }
 
@@ -634,31 +704,68 @@
     $("#app").classList.add("hidden");
     $("#tela-login").classList.remove("hidden");
     renderLoginUI();
-    $("#login-nome").value = "";
+    const sel = $("#login-usuario");
+    if (sel) sel.value = "";
+    const adminInput = $("#login-nome-admin");
+    if (adminInput) adminInput.value = "";
     if (codigoCasa) $("#login-casa").value = CASA_PADRAO;
     setSyncStatus(firebasePronto() ? (navigator.onLine ? "offline" : "offline") : "local");
-    $("#login-nome").focus();
+    (sel || $("#login-nome-admin"))?.focus();
   }
 
   function renderLoginUI() {
-    const datalist = $("#lista-usuarios-login");
     if ($("#login-casa")) $("#login-casa").value = CASA_PADRAO;
     setSyncStatus(firebasePronto() ? (navigator.onLine ? "online" : "offline") : "local");
     updateInstallHint();
 
-    datalist.innerHTML = state.pessoas
-      .map((p) => `<option value="${escapeHtml(p.nome)}"></option>`)
-      .join("");
+    const select = $("#login-usuario");
+    const campoUsuario = $("#login-campo-usuario");
+    const campoAdmin = $("#login-campo-admin");
+    const adminInput = $("#login-nome-admin");
+    const vazio = !state.pessoas.length;
+
+    if (campoUsuario) campoUsuario.classList.toggle("hidden", vazio);
+    if (campoAdmin) campoAdmin.classList.toggle("hidden", !vazio);
+    if (select) {
+      select.required = !vazio;
+      const prev = select.value;
+      select.innerHTML =
+        `<option value="">Selecione…</option>` +
+        [...state.pessoas]
+          .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
+          .map((p) => `<option value="${p.id}">${escapeHtml(p.nome)}</option>`)
+          .join("");
+      if (prev && state.pessoas.some((p) => p.id === prev)) select.value = prev;
+    }
+    if (adminInput) adminInput.required = vazio;
   }
 
   function initLogin() {
     $("#form-login").addEventListener("submit", async (e) => {
       e.preventDefault();
       const casa = CASA_PADRAO;
+      const idAntes = $("#login-usuario")?.value || "";
+      const nomeAntes = $("#login-usuario")?.selectedOptions?.[0]?.textContent?.trim() || "";
+      const nomeAdmin = $("#login-nome-admin")?.value || "";
+
       await startSync(casa);
-      const pessoa = ensurePessoaByNome($("#login-nome").value);
-      if (!pessoa) return toast("Informe um nome.");
-      saveState();
+      renderLoginUI();
+
+      let pessoa = null;
+      if (!state.pessoas.length) {
+        pessoa = bootstrapAdminSeVazio(nomeAdmin);
+        if (!pessoa) {
+          return toast("Primeiro acesso: use o nome do admin (Paulo).");
+        }
+      } else {
+        pessoa =
+          state.pessoas.find((p) => p.id === idAntes) ||
+          buscarPessoaCadastrada(nomeAntes);
+        if (!pessoa) {
+          return toast("Usuário não cadastrado. Peça ao admin para cadastrar em Config.");
+        }
+      }
+
       schedulePush();
       entrarComo(pessoa);
     });
@@ -761,9 +868,10 @@
     }
 
     $$("#form-pessoa input, #form-pessoa button").forEach((el) => {
-      el.disabled = false;
+      el.disabled = !admin;
     });
-    $("#form-pessoa")?.classList.remove("is-disabled");
+    $("#form-pessoa")?.classList.toggle("hidden", !admin);
+    $("#form-pessoa")?.classList.toggle("is-disabled", !admin);
   }
 
   function renderMercadoLista() {
@@ -1097,10 +1205,11 @@
 
     $("#form-pessoa").addEventListener("submit", (e) => {
       e.preventDefault();
-      const nome = $("#pessoa-nome").value.trim();
+      if (!isAdmin()) return toast("Somente o admin pode cadastrar usuários.");
+      const nome = $("#pessoa-nome").value.trim().replace(/\s+/g, " ");
       if (!nome) return toast("Informe o nome.");
       if (state.pessoas.some((p) => p.nome.toLowerCase() === nome.toLowerCase())) {
-        return toast("Essa pessoa já está cadastrada.");
+        return toast("Esse usuário já está cadastrado.");
       }
       state.pessoas.push({ id: uid(), nome });
       state.pessoas.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
@@ -1110,7 +1219,6 @@
       renderVaquinhaUI();
       fillPendenciaPessoas();
       renderLoginUI();
-      renderAdminUsuarios();
       toast(`${nome} cadastrado(a).`);
     });
 
@@ -1184,7 +1292,7 @@
     });
 
     $("#btn-add-compra").addEventListener("click", () => {
-      if (!state.pessoas.length) return toast("Cadastre pessoas antes.");
+      if (!state.pessoas.length) return toast("Peça ao admin para cadastrar usuários.");
       adicionarLinhaCompra();
       atualizarPreviewVaquinha();
       updateMesStatus();
@@ -1430,9 +1538,9 @@
     const u = usuarioAtual();
     if (!u) return;
 
-    const items = state.pendencias.filter(
-      (p) => p.credorId === u.id || p.devedorId === u.id
-    );
+    if (normalizarPendenciasIds()) saveState();
+
+    const items = state.pendencias.filter((p) => usuarioNaPendencia(p, u));
     const abertas = items.filter((p) => p.status === "pendente");
 
     $("#pendencias-count").textContent = `${items.length} ite${items.length === 1 ? "m" : "ns"}`;
@@ -1440,14 +1548,15 @@
     // Cards por pessoa (somente pendentes)
     const porPessoa = {};
     abertas.forEach((p) => {
-      const souCredor = p.credorId === u.id;
+      const souCredor = souCredorDaPendencia(p, u);
       const outraId = souCredor ? p.devedorId : p.credorId;
       const outraNome = souCredor ? p.devedorNome : p.credorNome;
-      if (!porPessoa[outraId]) {
-        porPessoa[outraId] = { id: outraId, nome: outraNome, receber: 0, pagar: 0 };
+      const chave = outraId || outraNome || "outro";
+      if (!porPessoa[chave]) {
+        porPessoa[chave] = { id: outraId, nome: outraNome, receber: 0, pagar: 0 };
       }
-      if (souCredor) porPessoa[outraId].receber += Number(p.valor) || 0;
-      else porPessoa[outraId].pagar += Number(p.valor) || 0;
+      if (souCredor) porPessoa[chave].receber += Number(p.valor) || 0;
+      else porPessoa[chave].pagar += Number(p.valor) || 0;
     });
 
     const cards = Object.values(porPessoa).sort((a, b) =>
@@ -1509,7 +1618,7 @@
 
     box.innerHTML = items
       .map((p) => {
-        const souCredor = p.credorId === u.id;
+        const souCredor = souCredorDaPendencia(p, u);
         const tipoLabel = souCredor ? "A receber" : "A pagar";
         const outra = souCredor ? p.devedorNome : p.credorNome;
         const tipoClass = souCredor ? "pendencia--receber" : "pendencia--pagar";
@@ -1526,7 +1635,10 @@
         } else {
           acoes.push(`<span class="detalhe">Pago em ${formatDateTime(p.pagoEm)}</span>`);
         }
-        if (p.criadoPorId === u.id) {
+        const souCriador =
+          p.criadoPorId === u.id ||
+          String(p.criadoPorNome || "").trim().toLowerCase() === u.nome.trim().toLowerCase();
+        if (souCriador) {
           acoes.push(
             `<button type="button" class="btn btn--ghost btn--sm btn-excluir-pend" data-id="${p.id}">Excluir</button>`
           );
@@ -1559,9 +1671,10 @@
         pend.pagoPorId = autor.lancadoPorId;
         pend.pagoPorNome = autor.lancadoPorNome;
 
-        const outroId = pend.credorId === usuarioAtualId ? pend.devedorId : pend.credorId;
+        const eu = usuarioAtual();
+        const outroId = souCredorDaPendencia(pend, eu) ? pend.devedorId : pend.credorId;
         notificar({
-          paraUserIds: [outroId],
+          paraUserIds: [outroId].filter(Boolean),
           titulo: "Pendência paga",
           texto: `${autor.lancadoPorNome} marcou "${pend.descricao}" (${formatMoney(pend.valor)}) como pago.`,
           tipo: "pendencia",
@@ -1578,12 +1691,18 @@
       btn.addEventListener("click", () => {
         const pend = state.pendencias.find((p) => p.id === btn.dataset.id);
         if (!pend) return;
-        if (pend.criadoPorId !== usuarioAtualId) {
+        const eu = usuarioAtual();
+        const souCriador =
+          pend.criadoPorId === usuarioAtualId ||
+          (eu &&
+            String(pend.criadoPorNome || "").trim().toLowerCase() ===
+              eu.nome.trim().toLowerCase());
+        if (!souCriador) {
           return toast("Só quem lançou pode excluir.");
         }
         if (!confirm(`Excluir a pendência "${pend.descricao}"?`)) return;
 
-        const outroId = pend.credorId === usuarioAtualId ? pend.devedorId : pend.credorId;
+        const outroId = souCredorDaPendencia(pend, eu) ? pend.devedorId : pend.credorId;
         const autor = autorMeta();
         state.pendencias = state.pendencias.filter((p) => p.id !== pend.id);
         notificar({
@@ -1926,29 +2045,41 @@
     empty?.classList.add("hidden");
 
     lista.innerHTML = state.pessoas
-      .map(
-        (p) => `
+      .map((p) => {
+        const adminUser = p.nome.trim().toLowerCase() === ADMIN_NOME;
+        const voce = p.id === usuarioAtualId;
+        const meta = [adminUser ? "admin" : null, voce ? "você" : null].filter(Boolean).join(" · ");
+        const podeRemover = isAdmin() && !adminUser && !voce;
+        return `
       <li class="lista-pessoas__item">
-        <span>${escapeHtml(p.nome)}${p.id === usuarioAtualId ? " (você)" : ""}</span>
-        <button type="button" class="btn btn--icon btn-excluir-pessoa" data-id="${p.id}" title="Remover">×</button>
-      </li>`
-      )
+        <span>${escapeHtml(p.nome)}${meta ? ` <span class="detalhe">(${meta})</span>` : ""}</span>
+        ${
+          podeRemover
+            ? `<button type="button" class="btn btn--icon btn-excluir-pessoa" data-id="${p.id}" title="Remover">×</button>`
+            : `<span class="badge badge--aberto">—</span>`
+        }
+      </li>`;
+      })
       .join("");
 
     lista.querySelectorAll(".btn-excluir-pessoa").forEach((btn) => {
       btn.addEventListener("click", () => {
+        if (!isAdmin()) return toast("Somente o admin pode remover usuários.");
         const id = btn.dataset.id;
         if (id === usuarioAtualId) return toast("Não é possível remover o usuário logado.");
         const pessoa = state.pessoas.find((p) => p.id === id);
-        if (!confirm(`Remover ${pessoa?.nome}?`)) return;
+        if (!pessoa) return;
+        if (pessoa.nome.trim().toLowerCase() === ADMIN_NOME) {
+          return toast("Não é possível remover o admin.");
+        }
+        if (!confirm(`Remover o usuário ${pessoa.nome}?`)) return;
         state.pessoas = state.pessoas.filter((p) => p.id !== id);
         saveState();
         renderPessoasLista();
         renderVaquinhaUI();
         fillPendenciaPessoas();
         renderLoginUI();
-        renderAdminUsuarios();
-        toast("Pessoa removida.");
+        toast(`${pessoa.nome} removido(a).`);
       });
     });
   }
@@ -2134,64 +2265,8 @@
     renderGruposConfig();
     setSyncStatus(syncStatus);
     renderTiposDespesa();
-    renderAdminUsuarios();
     fillSelectCompradores();
-  }
-
-  function renderAdminUsuarios() {
-    const box = $("#admin-usuarios");
-    const lista = $("#lista-usuarios-admin");
-    const empty = $("#empty-usuarios-admin");
-    if (!box || !lista) return;
-
-    if (!isAdmin()) {
-      box.classList.add("hidden");
-      return;
-    }
-
-    box.classList.remove("hidden");
-    const pessoas = [...state.pessoas].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-
-    if (!pessoas.length) {
-      lista.innerHTML = "";
-      empty.classList.remove("hidden");
-      return;
-    }
-
-    empty.classList.add("hidden");
-    lista.innerHTML = pessoas
-      .map((p) => {
-        const admin = p.nome.trim().toLowerCase() === ADMIN_NOME;
-        const voce = p.id === usuarioAtualId;
-        const meta = [admin ? "admin" : null, voce ? "você" : null].filter(Boolean).join(" · ");
-        return `
-          <li class="lista-pessoas__item">
-            <span>${escapeHtml(p.nome)}${meta ? ` <span class="detalhe">(${meta})</span>` : ""}</span>
-            ${
-              admin || voce
-                ? `<span class="badge badge--aberto">—</span>`
-                : `<button type="button" class="btn btn--icon btn-excluir-user-admin" data-id="${p.id}" title="Remover usuário">×</button>`
-            }
-          </li>`;
-      })
-      .join("");
-
-    lista.querySelectorAll(".btn-excluir-user-admin").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        if (!isAdmin()) return toast("Somente o admin pode remover usuários.");
-        const id = btn.dataset.id;
-        const pessoa = state.pessoas.find((p) => p.id === id);
-        if (!pessoa) return;
-        if (!confirm(`Remover o usuário ${pessoa.nome}?`)) return;
-        state.pessoas = state.pessoas.filter((p) => p.id !== id);
-        saveState();
-        renderAdminUsuarios();
-        renderPessoasLista();
-        renderVaquinhaUI();
-        fillPendenciaPessoas();
-        toast(`${pessoa.nome} removido(a).`);
-      });
-    });
+    updateMesStatus();
   }
 
   function updateSomaPesos() {
@@ -2251,9 +2326,13 @@
   function calcularSaldosPendenciasMes(mesId) {
     const map = {};
     const ensure = (id, nome) => {
-      if (!id) return null;
-      if (!map[id]) map[id] = { id, nome: nome || "—", pagou: 0, cota: 0, saldo: 0 };
-      return map[id];
+      const pessoa = acharPessoaPorIdOuNome(id, nome);
+      const key = pessoa?.id || id || String(nome || "").trim().toLowerCase();
+      if (!key) return null;
+      const label = pessoa?.nome || nome || "—";
+      if (!map[key]) map[key] = { id: key, nome: label, pagou: 0, cota: 0, saldo: 0 };
+      else map[key].nome = label;
+      return map[key];
     };
     state.pendencias
       .filter((p) => p.status === "pendente" && (p.data || "").slice(0, 7) === mesId)
@@ -2784,6 +2863,7 @@
   }
 
   function init() {
+    if (normalizarPendenciasIds()) saveState();
     initLogin();
     initTabs();
     initForms();
