@@ -89,10 +89,7 @@
           <label class="field">
             <span class="field__label">Quem pagou</span>
             <select id="mercado-comprador" name="comprador" required>
-              <option value="paulo">Paulo / Grupo 1</option>
-              <option value="outro">Outro / Grupo 1</option>
-              <option value="mae-avo">Mãe-Avô / Grupo 2</option>
-              <option value="irmao-cunhada">Irmão-Cunhada / Grupo 3</option>
+              <option value="">Selecione…</option>
             </select>
           </label>
           <label class="field">
@@ -110,35 +107,54 @@
           </label>
           <button type="submit" class="btn btn--primary btn--block">Salvar mercado</button>
         </form>
+
+        <div id="mercado-total" class="mercado-total hidden" aria-live="polite"></div>
+
+        <div class="section-head">
+          <h3 class="section-head__title">Lançamentos do mês</h3>
+          <span id="mercado-count" class="section-head__meta">0</span>
+        </div>
+        <div id="lista-mercado" class="lista-mercado"></div>
+        <p id="empty-mercado" class="empty empty--sm">Nenhum mercado lançado neste mês.</p>
       </section>
 
       <!-- Despesas -->
       <section id="tab-despesas" class="panel" role="tabpanel" hidden>
         <h2 class="panel__title">Despesas Normais</h2>
-        <p class="panel__hint">Água, luz, gás, internet e demais contas da casa.</p>
+        <p class="panel__hint">Água, luz, gás e demais contas — cadastre os tipos em Config.</p>
         <p id="aviso-despesa" class="aviso hidden">Abra um mês para lançar despesas.</p>
 
         <form id="form-despesa" class="form" autocomplete="off">
           <label class="field">
             <span class="field__label">Descrição</span>
-            <input type="text" id="despesa-descricao" name="descricao" list="sugestoes-despesa" placeholder="Ex: Luz, Água, Gás, Internet" required />
-            <datalist id="sugestoes-despesa">
-              <option value="Água"></option>
-              <option value="Luz"></option>
-              <option value="Gás"></option>
-              <option value="Internet"></option>
-              <option value="Condomínio"></option>
-            </datalist>
+            <select id="despesa-descricao" name="descricao" required>
+              <option value="">Selecione…</option>
+            </select>
           </label>
           <label class="field">
             <span class="field__label">Data</span>
             <input type="date" id="despesa-data" name="data" required />
           </label>
           <label class="field">
+            <span class="field__label">Quem pagou</span>
+            <select id="despesa-comprador" name="comprador" required>
+              <option value="">Selecione…</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field__label">Forma de pagamento</span>
+            <select id="despesa-pagamento" name="pagamento" required>
+              <option value="credito">Crédito</option>
+              <option value="pix">PIX</option>
+              <option value="dinheiro">Dinheiro</option>
+              <option value="debito">Débito</option>
+            </select>
+          </label>
+          <label class="field">
             <span class="field__label">Critério de divisão</span>
             <select id="despesa-criterio" name="criterio" required>
               <option value="proporcional">Proporcional aos pesos</option>
-              <option value="igual_3">Internet — 3 partes iguais</option>
+              <option value="igual_3">Partes iguais entre os grupos</option>
             </select>
           </label>
           <label class="field">
@@ -303,7 +319,37 @@
       <!-- Config -->
       <section id="tab-config" class="panel" role="tabpanel" hidden>
         <h2 class="panel__title">Configurações</h2>
-        <p class="panel__hint">Pesos da casa e sincronização online.</p>
+        <p class="panel__hint">Grupos, tipos de despesa e sincronização online.</p>
+
+        <form id="form-grupos" class="form" style="margin-bottom:1.25rem" autocomplete="off">
+          <fieldset class="fieldset">
+            <legend class="fieldset__legend">Grupos e pesos</legend>
+            <p class="fieldset__hint">Edite o nome, ajuste o peso ou adicione novos grupos da casa.</p>
+            <div class="field__row-label" style="margin-bottom:0.5rem">
+              <span class="field__label">Grupos</span>
+              <button type="button" id="btn-add-grupo" class="btn btn--ghost btn--sm">+ Grupo</button>
+            </div>
+            <div id="lista-grupos-config" class="grupos-config"></div>
+            <p class="peso-total">Soma dos pesos: <strong id="soma-pesos">0</strong></p>
+          </fieldset>
+          <button type="submit" class="btn btn--primary btn--block">Salvar grupos</button>
+        </form>
+
+        <form id="form-tipo-despesa" class="form" style="margin-bottom:1.25rem" autocomplete="off">
+          <fieldset class="fieldset">
+            <legend class="fieldset__legend">Cadastro de despesas</legend>
+            <p class="fieldset__hint">Lista usada na aba Despesas — todos usam os mesmos nomes.</p>
+            <div class="row-add">
+              <label class="field field--grow">
+                <span class="field__label">Nome da despesa</span>
+                <input type="text" id="tipo-despesa-nome" name="nome" placeholder="Ex: Água, Luz, Gás, Internet" required />
+              </label>
+              <button type="submit" class="btn btn--secondary btn-add-pessoa">Adicionar</button>
+            </div>
+            <ul id="lista-tipos-despesa" class="lista-pessoas"></ul>
+            <p id="empty-tipos-despesa" class="empty empty--sm hidden">Nenhuma despesa cadastrada.</p>
+          </fieldset>
+        </form>
 
         <div class="form" style="margin-bottom:1.25rem">
           <fieldset class="fieldset">
@@ -317,26 +363,6 @@
             </p>
           </fieldset>
         </div>
-
-        <form id="form-pesos" class="form">
-          <fieldset class="fieldset">
-            <legend class="fieldset__legend">Pesos dos grupos</legend>
-            <label class="field">
-              <span class="field__label">Grupo 1 — Paulo / esposa / filhos</span>
-              <input type="number" id="peso-g1" name="pesoG1" min="0.1" step="0.1" required />
-            </label>
-            <label class="field">
-              <span class="field__label">Grupo 2 — Mãe / irmão / avô</span>
-              <input type="number" id="peso-g2" name="pesoG2" min="0.1" step="0.1" required />
-            </label>
-            <label class="field">
-              <span class="field__label">Grupo 3 — Cunhada / irmão (fim de semana)</span>
-              <input type="number" id="peso-g3" name="pesoG3" min="0.1" step="0.1" required />
-            </label>
-            <p class="peso-total">Soma dos pesos: <strong id="soma-pesos">7.8</strong></p>
-          </fieldset>
-          <button type="submit" class="btn btn--primary btn--block">Salvar pesos</button>
-        </form>
 
         <div id="admin-usuarios" class="form form--spaced hidden">
           <fieldset class="fieldset">

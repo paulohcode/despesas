@@ -562,10 +562,79 @@ select {
   display: none !important;
 }
 
-.resumo {
-  display: grid;
+.lista-mercado {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.mercado-total {
+  margin: 1.15rem 0 0.85rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 10px;
+  border: 1px dashed var(--line);
+  background: color-mix(in srgb, var(--surface) 88%, var(--brand) 12%);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 0.75rem;
-  margin-bottom: 1.35rem;
+}
+
+.mercado-total__label {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  letter-spacing: 0.02em;
+}
+
+.mercado-total__valor {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--brand-deep);
+}
+
+.mercado-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem 0.75rem;
+  padding: 0.75rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.mercado-item__meta {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+.mercado-item__detalhe {
+  margin: 0.15rem 0 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.mercado-item__valor {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--brand-deep);
+  align-self: center;
+  text-align: right;
+}
+
+.mercado-item__por {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--ink-muted);
 }
 
 .card-resumo {
@@ -732,10 +801,50 @@ select {
   color: #4a3d7a;
 }
 
-.row-add {
+.grupos-config {
   display: flex;
-  align-items: flex-end;
-  gap: 0.6rem;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-bottom: 0.65rem;
+}
+
+.grupo-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 6.5rem auto;
+  gap: 0.5rem;
+  align-items: end;
+  padding: 0.65rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.grupo-row .field {
+  margin: 0;
+}
+
+.grupo-row__peso {
+  min-width: 0;
+}
+
+.grupo-row .btn--icon {
+  margin-bottom: 0.15rem;
+}
+
+@media (max-width: 520px) {
+  .grupo-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .grupo-row__peso {
+    grid-column: 1 / 2;
+  }
+
+  .grupo-row .btn--icon {
+    grid-column: 2 / 3;
+    grid-row: 1 / 3;
+    align-self: center;
+  }
 }
 
 .field--grow {
@@ -1026,6 +1135,10 @@ select {
 
 .pendencia__acoes {
   margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
 }
 
 /* Notificações */

@@ -6,14 +6,26 @@
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
-  const DEFAULT_PESOS = { g1: 3.0, g2: 3.0, g3: 1.8 };
+  const DEFAULT_GRUPOS = [
+    { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
+    { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
+    { id: "g3", nome: "Cunhada / irmão (fim de semana)", peso: 1.8 },
+  ];
+  const DEFAULT_TIPOS_DESPESA = [
+    { id: "td-agua", nome: "Água" },
+    { id: "td-luz", nome: "Luz" },
+    { id: "td-gas", nome: "Gás" },
+    { id: "td-internet", nome: "Internet" },
+    { id: "td-condominio", nome: "Condomínio" },
+  ];
 
   const MESES_NOME = [
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
   ];
 
-  const COMPRADORES = {
+  /** Compatibilidade com lançamentos antigos (quem pagou). */
+  const LEGACY_COMPRADORES = {
     paulo: { label: "Paulo / Grupo 1", grupo: "g1" },
     outro: { label: "Outro / Grupo 1", grupo: "g1" },
     "mae-avo": { label: "Mãe-Avô / Grupo 2", grupo: "g2" },
@@ -26,8 +38,6 @@
     dinheiro: "Dinheiro",
     debito: "Débito",
   };
-
-  const GRUPOS = { g1: "Grupo 1", g2: "Grupo 2", g3: "Grupo 3" };
 
   let state = loadState();
   let usuarioAtualId = localStorage.getItem(SESSION_KEY) || null;
@@ -50,16 +60,14 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return defaultState();
       const parsed = JSON.parse(raw);
-      const pesos = {
-        g1: Number(parsed.pesos?.g1) || DEFAULT_PESOS.g1,
-        g2: Number(parsed.pesos?.g2) || DEFAULT_PESOS.g2,
-        g3: Number(parsed.pesos?.g3) || DEFAULT_PESOS.g3,
-      };
+      const grupos = normalizarGrupos(parsed.grupos, parsed.pesos);
+      const pesos = pesosFromGrupos(grupos);
 
       let meses = Array.isArray(parsed.meses) ? parsed.meses : [];
       let mesAtual = parsed.mesAtual || null;
       let lancamentos = Array.isArray(parsed.lancamentos) ? parsed.lancamentos : [];
       let pessoas = Array.isArray(parsed.pessoas) ? parsed.pessoas : [];
+      let tiposDespesa = normalizarTiposDespesa(parsed.tiposDespesa);
 
       if (!meses.length && lancamentos.length) {
         const ids = [...new Set(lancamentos.map((l) => l.mesId || (l.data || "").slice(0, 7)).filter(Boolean))];
@@ -82,10 +90,12 @@
 
       return {
         lancamentos,
+        grupos,
         pesos,
         meses,
         mesAtual,
         pessoas,
+        tiposDespesa,
         pendencias: Array.isArray(parsed.pendencias) ? parsed.pendencias : [],
         notificacoes: Array.isArray(parsed.notificacoes) ? parsed.notificacoes : [],
         updatedAt: Number(parsed.updatedAt) || 0,
@@ -96,16 +106,87 @@
   }
 
   function defaultState() {
+    const grupos = DEFAULT_GRUPOS.map((g) => ({ ...g }));
     return {
       lancamentos: [],
-      pesos: { ...DEFAULT_PESOS },
+      grupos,
+      pesos: pesosFromGrupos(grupos),
       meses: [],
       mesAtual: null,
       pessoas: [],
+      tiposDespesa: DEFAULT_TIPOS_DESPESA.map((t) => ({ ...t })),
       pendencias: [],
       notificacoes: [],
       updatedAt: 0,
     };
+  }
+
+  function normalizarGrupos(lista, pesosLegacy) {
+    if (Array.isArray(lista) && lista.length) {
+      const vistos = new Set();
+      const out = [];
+      lista.forEach((g, i) => {
+        const id = String(g?.id || `g${i + 1}`).trim() || `g${i + 1}`;
+        if (vistos.has(id)) return;
+        const nome = String(g?.nome || `Grupo ${i + 1}`)
+          .trim()
+          .replace(/\s+/g, " ");
+        const peso = Number(g?.peso);
+        if (!nome || !(peso > 0)) return;
+        vistos.add(id);
+        out.push({ id, nome, peso });
+      });
+      if (out.length) return out;
+    }
+    return DEFAULT_GRUPOS.map((g) => ({
+      ...g,
+      peso: Number(pesosLegacy?.[g.id]) > 0 ? Number(pesosLegacy[g.id]) : g.peso,
+    }));
+  }
+
+  function pesosFromGrupos(grupos = state.grupos) {
+    const out = {};
+    (grupos || []).forEach((g) => {
+      out[g.id] = Number(g.peso) || 0;
+    });
+    return out;
+  }
+
+  function nextGrupoId(grupos = state.grupos) {
+    const ids = new Set((grupos || []).map((g) => g.id));
+    let n = 1;
+    while (ids.has(`g${n}`)) n += 1;
+    return `g${n}`;
+  }
+
+  function labelComprador(id) {
+    if (!id) return "—";
+    const g = (state.grupos || []).find((x) => x.id === id);
+    if (g) return g.nome;
+    return LEGACY_COMPRADORES[id]?.label || id;
+  }
+
+  function normalizarTiposDespesa(lista) {
+    if (!Array.isArray(lista) || !lista.length) {
+      return DEFAULT_TIPOS_DESPESA.map((t) => ({ ...t }));
+    }
+    const vistos = new Set();
+    const out = [];
+    lista.forEach((t) => {
+      const nome = String(typeof t === "string" ? t : t?.nome || "")
+        .trim()
+        .replace(/\s+/g, " ");
+      if (!nome) return;
+      const chave = nome.toLowerCase();
+      if (vistos.has(chave)) return;
+      vistos.add(chave);
+      out.push({
+        id: (typeof t === "object" && t?.id) || `td-${uid()}`,
+        nome,
+      });
+    });
+    out.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    return out.length ? out : DEFAULT_TIPOS_DESPESA.map((t) => ({ ...t }));
   }
 
   function saveState() {
@@ -169,10 +250,12 @@
     return {
       updatedAt: state.updatedAt || Date.now(),
       lancamentos: state.lancamentos,
-      pesos: state.pesos,
+      grupos: state.grupos,
+      pesos: pesosFromGrupos(state.grupos),
       meses: state.meses,
       mesAtual: state.mesAtual,
       pessoas: state.pessoas,
+      tiposDespesa: state.tiposDespesa,
       pendencias: state.pendencias,
       notificacoes: state.notificacoes,
     };
@@ -186,16 +269,15 @@
     }
 
     applyingRemote = true;
+    const grupos = normalizarGrupos(payload.grupos, payload.pesos);
     state = {
       lancamentos: Array.isArray(payload.lancamentos) ? payload.lancamentos : [],
-      pesos: {
-        g1: Number(payload.pesos?.g1) || DEFAULT_PESOS.g1,
-        g2: Number(payload.pesos?.g2) || DEFAULT_PESOS.g2,
-        g3: Number(payload.pesos?.g3) || DEFAULT_PESOS.g3,
-      },
+      grupos,
+      pesos: pesosFromGrupos(grupos),
       meses: Array.isArray(payload.meses) ? payload.meses : [],
       mesAtual: payload.mesAtual || null,
       pessoas: Array.isArray(payload.pessoas) ? payload.pessoas : [],
+      tiposDespesa: normalizarTiposDespesa(payload.tiposDespesa),
       pendencias: Array.isArray(payload.pendencias) ? payload.pendencias : [],
       notificacoes: Array.isArray(payload.notificacoes) ? payload.notificacoes : [],
       updatedAt: remoteAt || Date.now(),
@@ -215,6 +297,7 @@
       fillFiltroMes();
       renderRelatorio();
       renderVaquinhaUI();
+      renderMercadoLista();
       renderPendencias();
       fillPendenciaPessoas();
       renderLoginUI();
@@ -370,23 +453,36 @@
       .replace(/"/g, "&quot;");
   }
 
-  function somaPesos(pesos = state.pesos) {
-    return Number((pesos.g1 + pesos.g2 + pesos.g3).toFixed(4));
+  function somaPesos(grupos = state.grupos) {
+    const lista = grupos || [];
+    return Number(lista.reduce((acc, g) => acc + (Number(g.peso) || 0), 0).toFixed(4));
   }
 
-  function dividirValor(valor, criterio, pesos = state.pesos) {
+  function dividirValor(valor, criterio, grupos = state.grupos) {
     const total = Number(valor) || 0;
+    const lista = grupos || [];
+    const out = {};
+    if (!lista.length) return out;
+
     if (criterio === "igual_3") {
-      const parte = total / 3;
-      return { g1: parte, g2: parte, g3: parte };
+      const parte = total / lista.length;
+      lista.forEach((g) => {
+        out[g.id] = parte;
+      });
+      return out;
     }
-    const soma = somaPesos(pesos);
-    if (soma <= 0) return { g1: 0, g2: 0, g3: 0 };
-    return {
-      g1: total * (pesos.g1 / soma),
-      g2: total * (pesos.g2 / soma),
-      g3: total * (pesos.g3 / soma),
-    };
+
+    const soma = somaPesos(lista);
+    if (soma <= 0) {
+      lista.forEach((g) => {
+        out[g.id] = 0;
+      });
+      return out;
+    }
+    lista.forEach((g) => {
+      out[g.id] = total * ((Number(g.peso) || 0) / soma);
+    });
+    return out;
   }
 
   function getMes(id) {
@@ -520,6 +616,7 @@
     fillFiltroMes();
     renderRelatorio();
     renderVaquinhaUI();
+    renderMercadoLista();
     renderPendencias();
     fillPendenciaPessoas();
     fillConfigForm();
@@ -583,6 +680,9 @@
         if (tab === "relatorio") renderRelatorio();
         if (tab === "config") fillConfigForm();
         if (tab === "vaquinha") renderVaquinhaUI();
+        if (tab === "despesas" || tab === "mercado") fillSelectCompradores();
+        if (tab === "despesas") fillSelectTiposDespesa();
+        if (tab === "mercado") renderMercadoLista();
         if (tab === "pendencias") {
           fillPendenciaPessoas();
           renderPendencias();
@@ -659,6 +759,59 @@
     $("#form-pessoa")?.classList.remove("is-disabled");
   }
 
+  function renderMercadoLista() {
+    const box = $("#lista-mercado");
+    const empty = $("#empty-mercado");
+    const totalBox = $("#mercado-total");
+    const countEl = $("#mercado-count");
+    if (!box || !empty) return;
+
+    const mesId = state.mesAtual || mesSelecionado;
+    const items = state.lancamentos
+      .filter((l) => l.tipo === "mercado" && l.mesId === mesId)
+      .sort((a, b) => {
+        if (a.data === b.data) return (b.criadoEm || "").localeCompare(a.criadoEm || "");
+        return b.data.localeCompare(a.data);
+      });
+
+    const total = items.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
+    if (countEl) countEl.textContent = String(items.length);
+
+    if (totalBox) {
+      if (!items.length) {
+        totalBox.classList.add("hidden");
+        totalBox.innerHTML = "";
+      } else {
+        totalBox.classList.remove("hidden");
+        const mesLabel = mesId ? labelMes(mesId) : "mês";
+        totalBox.innerHTML = `
+          <p class="mercado-total__label">Total mercado · ${escapeHtml(mesLabel)}</p>
+          <p class="mercado-total__valor">${formatMoney(total)}</p>`;
+      }
+    }
+
+    if (!items.length) {
+      box.innerHTML = "";
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+
+    box.innerHTML = items
+      .map(
+        (item) => `
+      <article class="mercado-item">
+        <div>
+          <p class="mercado-item__meta">${formatDate(item.data)} · ${escapeHtml(PAGAMENTOS[item.pagamento] || item.pagamento || "—")}</p>
+          <p class="mercado-item__detalhe">${escapeHtml(labelComprador(item.comprador))}</p>
+        </div>
+        <p class="mercado-item__valor">${formatMoney(item.valor)}</p>
+        <p class="mercado-item__por">Por ${escapeHtml(item.lancadoPorNome || "—")}</p>
+      </article>`
+      )
+      .join("");
+  }
+
   function fillFiltroMes() {
     const select = $("#filtro-mes");
     if (!select) return;
@@ -726,23 +879,51 @@
       updateNotifBadge();
       e.target.reset();
       $("#mercado-data").value = todayISO();
+      fillSelectCompradores();
+      renderMercadoLista();
       toast("Mercado lançado.");
     });
 
-    $("#despesa-descricao").addEventListener("input", () => {
-      if ($("#despesa-descricao").value.trim().toLowerCase() === "internet") {
+    $("#despesa-descricao").addEventListener("change", () => {
+      const nome = $("#despesa-descricao").value.trim().toLowerCase();
+      if (nome === "internet") {
         $("#despesa-criterio").value = "igual_3";
+      } else if ($("#despesa-criterio").value === "igual_3") {
+        $("#despesa-criterio").value = "proporcional";
       }
+    });
+
+    $("#form-tipo-despesa").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const nome = $("#tipo-despesa-nome").value.trim().replace(/\s+/g, " ");
+      if (!nome) return toast("Informe o nome da despesa.");
+      if (state.tiposDespesa.some((t) => t.nome.toLowerCase() === nome.toLowerCase())) {
+        return toast("Essa despesa já está cadastrada.");
+      }
+      state.tiposDespesa.push({ id: uid(), nome });
+      state.tiposDespesa.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+      saveState();
+      e.target.reset();
+      renderTiposDespesa();
+      toast(`"${nome}" cadastrada.`);
     });
 
     $("#form-despesa").addEventListener("submit", (e) => {
       e.preventDefault();
       if (!mesAberto()) return toast("Abra um mês antes de lançar.");
+      if (!state.tiposDespesa.length) return toast("Cadastre ao menos um tipo de despesa.");
       const descricao = $("#despesa-descricao").value.trim();
       const data = $("#despesa-data").value;
+      const comprador = $("#despesa-comprador").value;
+      const pagamento = $("#despesa-pagamento").value;
       const criterio = $("#despesa-criterio").value;
       const valor = Number($("#despesa-valor").value);
-      if (!descricao || !data || !criterio || !(valor > 0)) return toast("Preencha todos os campos.");
+      if (!descricao || !data || !comprador || !pagamento || !criterio || !(valor > 0)) {
+        return toast("Preencha todos os campos.");
+      }
+      if (!state.tiposDespesa.some((t) => t.nome === descricao)) {
+        return toast("Selecione uma despesa cadastrada.");
+      }
       if (data.slice(0, 7) !== state.mesAtual) return toast(`A data deve pertencer a ${labelMes(state.mesAtual)}.`);
 
       const autor = autorMeta();
@@ -752,6 +933,8 @@
         tipo: "despesa",
         descricao,
         data,
+        comprador,
+        pagamento,
         criterio,
         valor,
         divisao: dividirValor(valor, criterio),
@@ -769,6 +952,8 @@
       updateNotifBadge();
       e.target.reset();
       $("#despesa-data").value = todayISO();
+      fillSelectTiposDespesa();
+      fillSelectCompradores();
       toast("Despesa lançada.");
     });
 
@@ -865,32 +1050,41 @@
       updateMesStatus();
     });
 
-    $("#form-pesos").addEventListener("submit", (e) => {
+    $("#form-grupos").addEventListener("submit", (e) => {
       e.preventDefault();
-      const g1 = Number($("#peso-g1").value);
-      const g2 = Number($("#peso-g2").value);
-      const g3 = Number($("#peso-g3").value);
-      if (!(g1 > 0) || !(g2 > 0) || !(g3 > 0)) return toast("Pesos devem ser > 0.");
-      state.pesos = { g1, g2, g3 };
+      const coletados = coletarGruposDoForm();
+      if (!coletados.length) return toast("Cadastre ao menos um grupo.");
+      if (coletados.some((g) => !g.nome)) return toast("Informe o nome de todos os grupos.");
+      if (coletados.some((g) => !(g.peso > 0))) return toast("Pesos devem ser > 0.");
+      const nomes = coletados.map((g) => g.nome.toLowerCase());
+      if (new Set(nomes).size !== nomes.length) return toast("Nomes de grupos duplicados.");
+
+      state.grupos = coletados;
+      state.pesos = pesosFromGrupos(state.grupos);
       state.lancamentos = state.lancamentos.map((item) => {
         if (item.tipo === "vaquinha") return item;
-        if (item.criterio === "igual_3") return { ...item, divisao: dividirValor(item.valor, "igual_3") };
-        return { ...item, divisao: dividirValor(item.valor, "proporcional") };
+        const crit = item.criterio === "igual_3" ? "igual_3" : "proporcional";
+        return { ...item, divisao: dividirValor(item.valor, crit) };
       });
       const autor = autorMeta();
       notificarTodosExceto(autor.lancadoPorId, {
-        titulo: "Pesos atualizados",
-        texto: `${autor.lancadoPorNome} alterou os pesos dos grupos.`,
+        titulo: "Grupos atualizados",
+        texto: `${autor.lancadoPorNome} alterou os grupos/pesos da casa.`,
         tipo: "config",
       });
       saveState();
       updateNotifBadge();
-      updateSomaPesos();
-      toast("Pesos atualizados.");
+      renderGruposConfig();
+      fillSelectCompradores();
+      renderRelatorio();
+      toast("Grupos salvos.");
     });
 
-    ["peso-g1", "peso-g2", "peso-g3"].forEach((id) => {
-      $(`#${id}`).addEventListener("input", updateSomaPesos);
+    $("#btn-add-grupo").addEventListener("click", () => {
+      const atuais = coletarGruposDoForm();
+      const id = nextGrupoId(atuais);
+      atuais.push({ id, nome: `Grupo ${atuais.length + 1}`, peso: 1 });
+      renderGruposConfig(atuais);
     });
 
     $("#filtro-mes").addEventListener("change", (e) => {
@@ -954,6 +1148,7 @@
       updateMesStatus();
       fillFiltroMes();
       renderRelatorio();
+      renderMercadoLista();
       toast(`${labelMes(id)} aberto.`);
     });
 
@@ -977,6 +1172,7 @@
       updateMesStatus();
       fillFiltroMes();
       renderRelatorio();
+      renderMercadoLista();
       toast(`${aberto.label} fechado.`);
     });
 
@@ -995,6 +1191,7 @@
       saveState();
       updateNotifBadge();
       renderRelatorio();
+      renderMercadoLista();
       toast(`Lançamentos de ${label} apagados.`);
     });
 
@@ -1169,10 +1366,19 @@
             ? `<span class="badge badge--aberto">Pago</span>`
             : `<span class="badge badge--fechado">Pendente</span>`;
 
-        const acao =
-          p.status === "pendente"
-            ? `<button type="button" class="btn btn--primary btn--sm btn-pagar-pend" data-id="${p.id}">Marcar como pago</button>`
-            : `<span class="detalhe">Pago em ${formatDateTime(p.pagoEm)}</span>`;
+        const acoes = [];
+        if (p.status === "pendente") {
+          acoes.push(
+            `<button type="button" class="btn btn--primary btn--sm btn-pagar-pend" data-id="${p.id}">Marcar como pago</button>`
+          );
+        } else {
+          acoes.push(`<span class="detalhe">Pago em ${formatDateTime(p.pagoEm)}</span>`);
+        }
+        if (p.criadoPorId === u.id) {
+          acoes.push(
+            `<button type="button" class="btn btn--ghost btn--sm btn-excluir-pend" data-id="${p.id}">Excluir</button>`
+          );
+        }
 
         return `
           <article class="pendencia ${tipoClass}">
@@ -1185,7 +1391,7 @@
             </div>
             <p class="pendencia__valor">${formatMoney(p.valor)}</p>
             <p class="detalhe">${formatDate(p.data)} · por ${escapeHtml(p.criadoPorNome)}</p>
-            <div class="pendencia__acoes">${acao}</div>
+            <div class="pendencia__acoes">${acoes.join("")}</div>
           </article>`;
       })
       .join("");
@@ -1213,6 +1419,32 @@
         updateNotifBadge();
         renderPendencias();
         toast("Marcado como pago.");
+      });
+    });
+
+    box.querySelectorAll(".btn-excluir-pend").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const pend = state.pendencias.find((p) => p.id === btn.dataset.id);
+        if (!pend) return;
+        if (pend.criadoPorId !== usuarioAtualId) {
+          return toast("Só quem lançou pode excluir.");
+        }
+        if (!confirm(`Excluir a pendência "${pend.descricao}"?`)) return;
+
+        const outroId = pend.credorId === usuarioAtualId ? pend.devedorId : pend.credorId;
+        const autor = autorMeta();
+        state.pendencias = state.pendencias.filter((p) => p.id !== pend.id);
+        notificar({
+          paraUserIds: [outroId].filter(Boolean),
+          titulo: "Pendência excluída",
+          texto: `${autor.lancadoPorNome} excluiu "${pend.descricao}" (${formatMoney(pend.valor)}).`,
+          tipo: "pendencia",
+          refId: pend.id,
+        });
+        saveState();
+        updateNotifBadge();
+        renderPendencias();
+        toast("Pendência excluída.");
       });
     });
   }
@@ -1338,6 +1570,62 @@
     if (Math.abs(saldo) < 0.005) return { classe: "saldo--ok", texto: "Quitado" };
     if (saldo > 0) return { classe: "saldo--receber", texto: `A receber ${formatMoney(v)}` };
     return { classe: "saldo--pagar", texto: `A pagar ${formatMoney(v)}` };
+  }
+
+  function fillSelectTiposDespesa(selected = "") {
+    const select = $("#despesa-descricao");
+    if (!select) return;
+    const atual = selected || select.value;
+    const tipos = Array.isArray(state.tiposDespesa) ? state.tiposDespesa : [];
+    select.innerHTML =
+      `<option value="">Selecione…</option>` +
+      tipos
+        .map(
+          (t) =>
+            `<option value="${escapeHtml(t.nome)}"${t.nome === atual ? " selected" : ""}>${escapeHtml(t.nome)}</option>`
+        )
+        .join("");
+  }
+
+  function renderTiposDespesa() {
+    if (!Array.isArray(state.tiposDespesa)) {
+      state.tiposDespesa = normalizarTiposDespesa(null);
+    }
+    const lista = $("#lista-tipos-despesa");
+    const empty = $("#empty-tipos-despesa");
+    if (!lista) return;
+
+    fillSelectTiposDespesa();
+
+    if (!state.tiposDespesa.length) {
+      lista.innerHTML = "";
+      empty?.classList.remove("hidden");
+      return;
+    }
+    empty?.classList.add("hidden");
+
+    lista.innerHTML = state.tiposDespesa
+      .map(
+        (t) => `
+      <li class="lista-pessoas__item">
+        <span>${escapeHtml(t.nome)}</span>
+        <button type="button" class="btn btn--icon btn-excluir-tipo-despesa" data-id="${t.id}" title="Remover">×</button>
+      </li>`
+      )
+      .join("");
+
+    lista.querySelectorAll(".btn-excluir-tipo-despesa").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.id;
+        const tipo = state.tiposDespesa.find((t) => t.id === id);
+        if (!tipo) return;
+        if (!confirm(`Remover "${tipo.nome}" da lista?`)) return;
+        state.tiposDespesa = state.tiposDespesa.filter((t) => t.id !== id);
+        saveState();
+        renderTiposDespesa();
+        toast("Despesa removida do cadastro.");
+      });
+    });
   }
 
   function renderVaquinhaUI() {
@@ -1482,13 +1770,75 @@
         .join("");
   }
 
-  function fillConfigForm() {
-    $("#peso-g1").value = state.pesos.g1;
-    $("#peso-g2").value = state.pesos.g2;
-    $("#peso-g3").value = state.pesos.g3;
+  function fillSelectCompradores() {
+    ["#mercado-comprador", "#despesa-comprador"].forEach((sel) => {
+      const el = $(sel);
+      if (!el) return;
+      const atual = el.value;
+      const grupos = state.grupos || [];
+      el.innerHTML =
+        `<option value="">Selecione…</option>` +
+        grupos
+          .map(
+            (g) =>
+              `<option value="${escapeHtml(g.id)}"${g.id === atual ? " selected" : ""}>${escapeHtml(g.nome)}</option>`
+          )
+          .join("");
+    });
+  }
+
+  function coletarGruposDoForm() {
+    const box = $("#lista-grupos-config");
+    if (!box) return [...(state.grupos || [])];
+    return $$(".grupo-row", box).map((row, i) => {
+      const id = row.dataset.id || nextGrupoId();
+      const nome = row.querySelector(".grupo-nome")?.value.trim().replace(/\s+/g, " ") || "";
+      const peso = Number(row.querySelector(".grupo-peso")?.value);
+      return { id, nome: nome || `Grupo ${i + 1}`, peso };
+    });
+  }
+
+  function renderGruposConfig(lista) {
+    const box = $("#lista-grupos-config");
+    if (!box) return;
+    const grupos = Array.isArray(lista) ? lista : state.grupos || [];
+    box.innerHTML = grupos
+      .map(
+        (g) => `
+      <div class="grupo-row" data-id="${escapeHtml(g.id)}">
+        <label class="field field--grow">
+          <span class="field__label">Nome</span>
+          <input type="text" class="grupo-nome" value="${escapeHtml(g.nome)}" required />
+        </label>
+        <label class="field grupo-row__peso">
+          <span class="field__label">Peso</span>
+          <input type="number" class="grupo-peso" min="0.1" step="0.1" value="${Number(g.peso)}" required />
+        </label>
+        <button type="button" class="btn btn--icon btn-remover-grupo" title="Remover grupo" aria-label="Remover">×</button>
+      </div>`
+      )
+      .join("");
+
+    box.querySelectorAll(".grupo-peso, .grupo-nome").forEach((input) => {
+      input.addEventListener("input", updateSomaPesos);
+    });
+    box.querySelectorAll(".btn-remover-grupo").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const rows = $$(".grupo-row", box);
+        if (rows.length <= 1) return toast("Mantenha ao menos um grupo.");
+        btn.closest(".grupo-row")?.remove();
+        updateSomaPesos();
+      });
+    });
     updateSomaPesos();
+  }
+
+  function fillConfigForm() {
+    renderGruposConfig();
     setSyncStatus(syncStatus);
+    renderTiposDespesa();
     renderAdminUsuarios();
+    fillSelectCompradores();
   }
 
   function renderAdminUsuarios() {
@@ -1547,10 +1897,13 @@
   }
 
   function updateSomaPesos() {
-    const g1 = Number($("#peso-g1").value) || 0;
-    const g2 = Number($("#peso-g2").value) || 0;
-    const g3 = Number($("#peso-g3").value) || 0;
-    $("#soma-pesos").textContent = (g1 + g2 + g3).toFixed(1);
+    const el = $("#soma-pesos");
+    if (!el) return;
+    const soma = $$("#lista-grupos-config .grupo-peso").reduce(
+      (acc, input) => acc + (Number(input.value) || 0),
+      0
+    );
+    el.textContent = soma.toFixed(1);
   }
 
   /* ---------- Relatório ---------- */
@@ -1584,12 +1937,12 @@
     const totais = casa.reduce(
       (acc, item) => {
         acc.geral += item.valor;
-        acc.g1 += item.divisao?.g1 || 0;
-        acc.g2 += item.divisao?.g2 || 0;
-        acc.g3 += item.divisao?.g3 || 0;
+        (state.grupos || []).forEach((g) => {
+          acc[g.id] = (acc[g.id] || 0) + (item.divisao?.[g.id] || 0);
+        });
         return acc;
       },
-      { geral: 0, g1: 0, g2: 0, g3: 0 }
+      { geral: 0 }
     );
 
     const totalVaquinhas = vaquinhas.reduce((acc, item) => acc + item.valor, 0);
@@ -1617,15 +1970,17 @@
         <p class="card-resumo__meta">${casa.length} lançamento(s) · pesos ${soma.toFixed(1)}</p>
       </div>
       <div class="grupos-grid">
-        ${["g1", "g2", "g3"]
-          .map(
-            (g) => `
+        ${(state.grupos || [])
+          .map((g) => {
+            const valor = totais[g.id] || 0;
+            const pct = soma > 0 ? ((Number(g.peso) / soma) * 100).toFixed(1) : "0.0";
+            return `
           <div class="card-grupo">
-            <p class="card-grupo__nome">${GRUPOS[g]}</p>
-            <p class="card-grupo__valor">${formatMoney(totais[g])}</p>
-            <p class="card-grupo__peso">Peso ${state.pesos[g].toFixed(1)} · ${((state.pesos[g] / soma) * 100).toFixed(1)}%</p>
-          </div>`
-          )
+            <p class="card-grupo__nome">${escapeHtml(g.nome)}</p>
+            <p class="card-grupo__valor">${formatMoney(valor)}</p>
+            <p class="card-grupo__peso">Peso ${Number(g.peso).toFixed(1)} · ${pct}%</p>
+          </div>`;
+          })
           .join("")}
       </div>`;
 
@@ -1674,7 +2029,7 @@
 
         let detalhe = "";
         if (item.tipo === "mercado") {
-          detalhe = `${COMPRADORES[item.comprador]?.label || item.comprador}<br><span class="detalhe">${PAGAMENTOS[item.pagamento] || item.pagamento}</span>`;
+          detalhe = `${escapeHtml(labelComprador(item.comprador))}<br><span class="detalhe">${PAGAMENTOS[item.pagamento] || item.pagamento}</span>`;
         } else if (item.tipo === "vaquinha") {
           const comprasTxt = (item.compras || []).map((c) => `${escapeHtml(c.nome)} ${formatMoney(c.valor)}`).join(" · ");
           const parts = (item.participantes || [])
@@ -1682,8 +2037,13 @@
             .join("<br>");
           detalhe = `${escapeHtml(item.descricao)}<br><span class="detalhe">Compras: ${comprasTxt || "—"}</span><br>${parts}`;
         } else {
-          const crit = item.criterio === "igual_3" ? "3 partes iguais" : "Proporcional";
-          detalhe = `${escapeHtml(item.descricao)}<br><span class="detalhe">${crit}</span>`;
+          const crit = item.criterio === "igual_3" ? "Partes iguais" : "Proporcional";
+          const quem = item.comprador ? labelComprador(item.comprador) : null;
+          const pag = item.pagamento
+            ? PAGAMENTOS[item.pagamento] || item.pagamento
+            : null;
+          const extra = [quem, pag].filter(Boolean).join(" · ");
+          detalhe = `${escapeHtml(item.descricao)}<br><span class="detalhe">${crit}${extra ? ` · ${escapeHtml(extra)}` : ""}</span>`;
         }
         detalhe += `<br><span class="detalhe">Por ${escapeHtml(item.lancadoPorNome || "—")}</span>`;
 
@@ -1718,6 +2078,7 @@
         saveState();
         updateNotifBadge();
         renderRelatorio();
+        renderMercadoLista();
         toast("Excluído.");
       });
     });
