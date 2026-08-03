@@ -3075,37 +3075,15 @@
                 .map(([nome, valor]) => {
                   const ativo = pessoalFiltroCategoria === nome ? " card-grupo--ativo" : "";
                   return `
-                <button type="button" class="card-grupo card-grupo--sm card-grupo--btn${ativo}" data-categoria="${escapeHtml(nome)}">
-                  <p class="card-grupo__nome">${escapeHtml(nome)}</p>
-                  <p class="card-grupo__valor">${formatMoney(valor)}</p>
-                </button>`;
+                <div class="card-grupo card-grupo--sm card-grupo--btn${ativo}" role="button" tabindex="0" data-categoria="${escapeHtml(nome)}" title="Filtrar por ${escapeHtml(nome)}">
+                  <span class="card-grupo__nome">${escapeHtml(nome)}</span>
+                  <span class="card-grupo__valor">${formatMoney(valor)}</span>
+                </div>`;
                 })
                 .join("")}
             </div>
             ${filtroAtivo}
           </div>`;
-
-        porCatBox.querySelectorAll(".card-grupo--btn").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            const cat = btn.dataset.categoria || "";
-            if (pessoalFiltroCategoria === cat) {
-              pessoalFiltroCategoria = "";
-            } else {
-              pessoalFiltroCategoria = cat;
-              if (pessoalFiltroTipo === "receitas") {
-                pessoalFiltroTipo = "despesas";
-                const sel = $("#pessoal-filtro-tipo");
-                if (sel) sel.value = "despesas";
-              }
-            }
-            renderPessoal();
-            $("#lista-pessoal")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-          });
-        });
-        porCatBox.querySelector(".btn-limpar-cat-pessoal")?.addEventListener("click", () => {
-          pessoalFiltroCategoria = "";
-          renderPessoal();
-        });
       }
     }
 
@@ -3314,6 +3292,42 @@
     if (dataEl) dataEl.value = todayISO();
     const dataRec = $("#receita-data");
     if (dataRec) dataRec.value = todayISO();
+
+    $("#pessoal-por-categoria")?.addEventListener("click", (e) => {
+      const limpar = e.target.closest(".btn-limpar-cat-pessoal");
+      if (limpar) {
+        pessoalFiltroCategoria = "";
+        renderPessoal();
+        toast("Filtro de categoria removido.");
+        return;
+      }
+      const card = e.target.closest(".card-grupo--btn");
+      if (!card) return;
+      const cat = card.getAttribute("data-categoria") || "";
+      if (!cat) return;
+      if (pessoalFiltroCategoria === cat) {
+        pessoalFiltroCategoria = "";
+        toast("Filtro de categoria removido.");
+      } else {
+        pessoalFiltroCategoria = cat;
+        if (pessoalFiltroTipo === "receitas") {
+          pessoalFiltroTipo = "despesas";
+          const sel = $("#pessoal-filtro-tipo");
+          if (sel) sel.value = "despesas";
+        }
+        toast(`Filtrando: ${cat}`);
+      }
+      renderPessoal();
+      $("#lista-pessoal")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+
+    $("#pessoal-por-categoria")?.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const card = e.target.closest(".card-grupo--btn");
+      if (!card) return;
+      e.preventDefault();
+      card.click();
+    });
 
     // Um menu aberto por vez (despesa / receita / cadastros / compartilhar)
     $$('#tab-pessoal details[data-acordeon="lancar"]').forEach((el) => {

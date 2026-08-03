@@ -795,11 +795,13 @@ select {
 }
 
 .card-grupo--sm .card-grupo__nome {
+  display: block;
   font-size: 0.65rem;
   margin-bottom: 0.15rem;
 }
 
 .card-grupo--sm .card-grupo__valor {
+  display: block;
   font-size: 0.95rem;
   letter-spacing: -0.01em;
   margin-top: 0.1rem;
@@ -812,14 +814,16 @@ select {
   cursor: pointer;
   font: inherit;
   color: inherit;
-  appearance: none;
-  -webkit-appearance: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
   transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
-.card-grupo--btn:hover {
+.card-grupo--btn:hover,
+.card-grupo--btn:focus-visible {
   border-color: color-mix(in srgb, var(--brand) 45%, var(--line));
   background: color-mix(in srgb, var(--brand-soft) 35%, #fff);
+  outline: none;
 }
 
 .card-grupo--ativo {
