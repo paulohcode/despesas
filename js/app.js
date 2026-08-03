@@ -767,6 +767,7 @@
     if (!box || !empty) return;
 
     const mesId = state.mesAtual || mesSelecionado;
+    const podeExcluirMes = mesEstaAberto(mesId);
     const items = state.lancamentos
       .filter((l) => l.tipo === "mercado" && l.mesId === mesId)
       .sort((a, b) => {
@@ -798,18 +799,54 @@
     empty.classList.add("hidden");
 
     box.innerHTML = items
-      .map(
-        (item) => `
+      .map((item) => {
+        const meu = item.lancadoPorId && item.lancadoPorId === usuarioAtualId;
+        const acao =
+          meu && podeExcluirMes
+            ? `<button type="button" class="btn btn--ghost btn--sm btn-excluir-mercado" data-id="${item.id}">Excluir</button>`
+            : "";
+        return `
       <article class="mercado-item">
         <div>
           <p class="mercado-item__meta">${formatDate(item.data)} · ${escapeHtml(PAGAMENTOS[item.pagamento] || item.pagamento || "—")}</p>
           <p class="mercado-item__detalhe">${escapeHtml(labelComprador(item.comprador))}</p>
         </div>
         <p class="mercado-item__valor">${formatMoney(item.valor)}</p>
-        <p class="mercado-item__por">Por ${escapeHtml(item.lancadoPorNome || "—")}</p>
-      </article>`
-      )
+        <div class="mercado-item__rodape">
+          <p class="mercado-item__por">Por ${escapeHtml(item.lancadoPorNome || "—")}</p>
+          ${acao}
+        </div>
+      </article>`;
+      })
       .join("");
+
+    box.querySelectorAll(".btn-excluir-mercado").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const item = state.lancamentos.find((l) => l.id === btn.dataset.id);
+        if (!item || item.tipo !== "mercado") return;
+        if (item.lancadoPorId !== usuarioAtualId) {
+          return toast("Só quem lançou pode excluir.");
+        }
+        if (!mesEstaAberto(item.mesId)) {
+          return toast("Só é possível excluir no mês aberto.");
+        }
+        if (!confirm(`Excluir mercado de ${formatMoney(item.valor)} (${formatDate(item.data)})?`)) return;
+
+        const autor = autorMeta();
+        state.lancamentos = state.lancamentos.filter((l) => l.id !== item.id);
+        notificarTodosExceto(autor.lancadoPorId, {
+          titulo: "Mercado excluído",
+          texto: `${autor.lancadoPorNome} excluiu um mercado de ${formatMoney(item.valor)}.`,
+          tipo: "exclusao",
+          refId: item.id,
+        });
+        saveState();
+        updateNotifBadge();
+        renderMercadoLista();
+        renderRelatorio();
+        toast("Mercado excluído.");
+      });
+    });
   }
 
   function fillFiltroMes() {
