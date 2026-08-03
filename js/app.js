@@ -1044,6 +1044,16 @@
     const aberto = mesAberto();
     box.classList.remove("mes-status--aberto", "mes-status--fechado", "mes-status--nenhum");
 
+    const admin = isAdmin();
+    let acoesAdmin = "";
+    if (admin) {
+      if (aberto) {
+        acoesAdmin = `<button type="button" class="btn btn--secondary btn--sm btn-mes-topo-fechar">Encerrar mês</button>`;
+      } else {
+        acoesAdmin = `<button type="button" class="btn btn--primary btn--sm btn-mes-topo-abrir">Abrir mês</button>`;
+      }
+    }
+
     if (aberto) {
       box.classList.add("mes-status--aberto");
       box.innerHTML = `
@@ -1051,7 +1061,10 @@
           <span class="mes-status__label">Mês aberto</span>
           <span class="mes-status__valor">${aberto.label}</span>
         </div>
-        <span class="badge badge--aberto">Aberto</span>`;
+        <div class="mes-status__right">
+          <span class="badge badge--aberto">Aberto</span>
+          ${acoesAdmin}
+        </div>`;
     } else if (state.meses.length) {
       box.classList.add("mes-status--fechado");
       box.innerHTML = `
@@ -1059,7 +1072,10 @@
           <span class="mes-status__label">Situação</span>
           <span class="mes-status__valor">Nenhum mês aberto</span>
         </div>
-        <span class="badge badge--fechado">Fechado</span>`;
+        <div class="mes-status__right">
+          <span class="badge badge--fechado">Fechado</span>
+          ${acoesAdmin}
+        </div>`;
     } else {
       box.classList.add("mes-status--nenhum");
       box.innerHTML = `
@@ -1067,8 +1083,18 @@
           <span class="mes-status__label">Situação</span>
           <span class="mes-status__valor">Abra um mês para começar</span>
         </div>
-        <span class="badge badge--nenhum">Sem mês</span>`;
+        <div class="mes-status__right">
+          <span class="badge badge--nenhum">Sem mês</span>
+          ${acoesAdmin}
+        </div>`;
     }
+
+    box.querySelector(".btn-mes-topo-abrir")?.addEventListener("click", () => {
+      $("#btn-abrir-mes")?.click();
+    });
+    box.querySelector(".btn-mes-topo-fechar")?.addEventListener("click", () => {
+      $("#btn-fechar-mes")?.click();
+    });
 
     const podeLancar = Boolean(aberto);
     ["#form-mercado", "#form-despesa", "#form-vaquinha"].forEach((sel) => {
@@ -1090,14 +1116,13 @@
 
     const btnFechar = $("#btn-fechar-mes");
     const btnAbrir = $("#btn-abrir-mes");
-    const admin = isAdmin();
     if (btnFechar) btnFechar.disabled = !aberto || !admin;
     if (btnAbrir) btnAbrir.disabled = !admin;
     const hintMes = $("#hint-mes-admin");
     if (hintMes) {
       hintMes.textContent = admin
-        ? "Você é admin: pode abrir e fechar o mês."
-        : "Somente Paulo (admin) pode abrir e fechar o mês.";
+        ? "Você é admin: pode abrir e encerrar o mês aqui ou no topo da tela."
+        : "Somente Paulo (admin) pode abrir e encerrar o mês.";
     }
 
     $$("#form-pessoa input, #form-pessoa button").forEach((el) => {
@@ -1638,18 +1663,18 @@
     });
 
     $("#btn-fechar-mes").addEventListener("click", () => {
-      if (!isAdmin()) return toast("Somente Paulo pode fechar o mês.");
+      if (!isAdmin()) return toast("Somente Paulo pode encerrar o mês.");
       const aberto = mesAberto();
       if (!aberto) return toast("Não há mês aberto.");
-      if (!confirm(`Fechar ${aberto.label}?`)) return;
+      if (!confirm(`Encerrar ${aberto.label}? Não será possível lançar mercado/despesas/vaquinha até abrir outro.`)) return;
       const autor = autorMeta();
       aberto.status = "fechado";
       aberto.fechadoEm = new Date().toISOString();
       aberto.fechadoPorNome = autor.lancadoPorNome;
       state.mesAtual = null;
       notificarTodosExceto(autor.lancadoPorId, {
-        titulo: "Mês fechado",
-        texto: `${autor.lancadoPorNome} fechou ${aberto.label}.`,
+        titulo: "Mês encerrado",
+        texto: `${autor.lancadoPorNome} encerrou ${aberto.label}.`,
         tipo: "mes",
       });
       saveState();
@@ -1660,7 +1685,7 @@
       renderMercadoLista();
       renderDespesaLista();
       renderEncontro();
-      toast(`${aberto.label} fechado.`);
+      toast(`${aberto.label} encerrado.`);
     });
 
     $("#btn-limpar").addEventListener("click", () => {
