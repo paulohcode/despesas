@@ -1423,6 +1423,62 @@
     $("#peso-g3").value = state.pesos.g3;
     updateSomaPesos();
     setSyncStatus(syncStatus);
+    renderAdminUsuarios();
+  }
+
+  function renderAdminUsuarios() {
+    const box = $("#admin-usuarios");
+    const lista = $("#lista-usuarios-admin");
+    const empty = $("#empty-usuarios-admin");
+    if (!box || !lista) return;
+
+    if (!isAdmin()) {
+      box.classList.add("hidden");
+      return;
+    }
+
+    box.classList.remove("hidden");
+    const pessoas = [...state.pessoas].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+
+    if (!pessoas.length) {
+      lista.innerHTML = "";
+      empty.classList.remove("hidden");
+      return;
+    }
+
+    empty.classList.add("hidden");
+    lista.innerHTML = pessoas
+      .map((p) => {
+        const admin = p.nome.trim().toLowerCase() === ADMIN_NOME;
+        const voce = p.id === usuarioAtualId;
+        const meta = [admin ? "admin" : null, voce ? "você" : null].filter(Boolean).join(" · ");
+        return `
+          <li class="lista-pessoas__item">
+            <span>${escapeHtml(p.nome)}${meta ? ` <span class="detalhe">(${meta})</span>` : ""}</span>
+            ${
+              admin || voce
+                ? `<span class="badge badge--aberto">—</span>`
+                : `<button type="button" class="btn btn--icon btn-excluir-user-admin" data-id="${p.id}" title="Remover usuário">×</button>`
+            }
+          </li>`;
+      })
+      .join("");
+
+    lista.querySelectorAll(".btn-excluir-user-admin").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!isAdmin()) return toast("Somente o admin pode remover usuários.");
+        const id = btn.dataset.id;
+        const pessoa = state.pessoas.find((p) => p.id === id);
+        if (!pessoa) return;
+        if (!confirm(`Remover o usuário ${pessoa.nome}?`)) return;
+        state.pessoas = state.pessoas.filter((p) => p.id !== id);
+        saveState();
+        renderAdminUsuarios();
+        renderVaquinhaUI();
+        fillPendenciaPessoas();
+        toast(`${pessoa.nome} removido(a).`);
+      });
+    });
   }
 
   function updateSomaPesos() {
