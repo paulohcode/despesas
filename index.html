@@ -74,6 +74,7 @@
       <button type="button" class="nav__btn" data-tab="despesas" role="tab" aria-selected="false">Despesas</button>
       <button type="button" class="nav__btn" data-tab="vaquinha" role="tab" aria-selected="false">Vaquinha</button>
       <button type="button" class="nav__btn" data-tab="pendencias" role="tab" aria-selected="false">Entre nós</button>
+      <button type="button" class="nav__btn" data-tab="pessoal" role="tab" aria-selected="false">Pessoal</button>
       <button type="button" class="nav__btn" data-tab="relatorio" role="tab" aria-selected="false">Relatório</button>
       <button type="button" class="nav__btn" data-tab="encontro" role="tab" aria-selected="false">Encontro</button>
       <button type="button" class="nav__btn" data-tab="config" role="tab" aria-selected="false">Config</button>
@@ -264,6 +265,133 @@
         </div>
         <div id="lista-pendencias" class="pendencias"></div>
         <p id="empty-pendencias" class="empty hidden">Nenhuma pendência para você.</p>
+      </section>
+
+      <!-- Pessoal -->
+      <section id="tab-pessoal" class="panel" role="tabpanel" hidden>
+        <h2 class="panel__title">Despesas pessoais</h2>
+        <p class="panel__hint">Sua lista particular. Você pode convidar alguém (ex.: esposa) para lançar e excluir junto — como dividir o controle das despesas.</p>
+
+        <div class="form" style="margin-bottom:1rem">
+          <label class="field">
+            <span class="field__label">Lista</span>
+            <select id="pessoal-lista"></select>
+          </label>
+          <label class="field">
+            <span class="field__label">Mês</span>
+            <select id="pessoal-mes"></select>
+          </label>
+        </div>
+
+        <details id="pessoal-cadastros" class="form pessoal-cadastros" style="margin-bottom:1.25rem">
+          <summary class="pessoal-cadastros__summary">Cadastros da lista</summary>
+          <p class="fieldset__hint" style="margin:0.75rem 0">Tipos, categorias e formas de pagamento desta lista (compartilhados com quem divide).</p>
+
+          <fieldset class="fieldset" style="margin-bottom:1rem">
+            <legend class="fieldset__legend">Tipos de despesa</legend>
+            <div class="row-add">
+              <label class="field field--grow">
+                <span class="field__label">Nome</span>
+                <input type="text" id="pessoal-tipo-nome" placeholder="Ex: Compra, Serviço, Assinatura" />
+              </label>
+              <button type="button" id="btn-add-pessoal-tipo" class="btn btn--secondary">Adicionar</button>
+            </div>
+            <ul id="lista-pessoal-tipos" class="lista-pessoas"></ul>
+            <p id="empty-pessoal-tipos" class="empty empty--sm hidden">Nenhum tipo cadastrado.</p>
+          </fieldset>
+
+          <fieldset class="fieldset" style="margin-bottom:1rem">
+            <legend class="fieldset__legend">Categorias</legend>
+            <div class="row-add">
+              <label class="field field--grow">
+                <span class="field__label">Nome</span>
+                <input type="text" id="pessoal-cat-nome" placeholder="Ex: Alimentação, Combustível, Saúde" />
+              </label>
+              <button type="button" id="btn-add-pessoal-cat" class="btn btn--secondary">Adicionar</button>
+            </div>
+            <ul id="lista-pessoal-cats" class="lista-pessoas"></ul>
+            <p id="empty-pessoal-cats" class="empty empty--sm hidden">Nenhuma categoria cadastrada.</p>
+          </fieldset>
+
+          <fieldset class="fieldset">
+            <legend class="fieldset__legend">Formas de pagamento</legend>
+            <div class="row-add">
+              <label class="field field--grow">
+                <span class="field__label">Nome</span>
+                <input type="text" id="pessoal-pag-nome" placeholder="Ex: PIX, Crédito, Débito" />
+              </label>
+              <button type="button" id="btn-add-pessoal-pag" class="btn btn--secondary">Adicionar</button>
+            </div>
+            <ul id="lista-pessoal-pags" class="lista-pessoas"></ul>
+            <p id="empty-pessoal-pags" class="empty empty--sm hidden">Nenhuma forma cadastrada.</p>
+          </fieldset>
+        </details>
+
+        <form id="form-pessoal" class="form" autocomplete="off">
+          <fieldset class="fieldset">
+            <legend class="fieldset__legend">Nova despesa pessoal</legend>
+            <label class="field">
+              <span class="field__label">Descrição</span>
+              <input type="text" id="pessoal-descricao" placeholder="Ex: Mercado do mês, gasolina, farmácia" required />
+            </label>
+            <label class="field">
+              <span class="field__label">Data</span>
+              <input type="date" id="pessoal-data" required />
+            </label>
+            <label class="field">
+              <span class="field__label">Tipo</span>
+              <select id="pessoal-tipo" required>
+                <option value="">Selecione…</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field__label">Categoria</span>
+              <select id="pessoal-categoria" required>
+                <option value="">Selecione…</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field__label">Forma de pagamento</span>
+              <select id="pessoal-pagamento" required>
+                <option value="">Selecione…</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field__label">Valor (R$)</span>
+              <input type="number" id="pessoal-valor" min="0.01" step="0.01" placeholder="0,00" required />
+            </label>
+          </fieldset>
+          <button type="submit" class="btn btn--primary btn--block">Salvar despesa pessoal</button>
+        </form>
+        <p id="aviso-pessoal-compartilhada" class="aviso hidden">Lista compartilhada — você e o dono podem lançar e excluir.</p>
+
+        <div id="pessoal-total" class="mercado-total hidden" aria-live="polite"></div>
+        <div id="pessoal-por-categoria" class="resumo" style="margin-top:0.75rem"></div>
+
+        <div class="section-head">
+          <h3 class="section-head__title">Lançamentos</h3>
+          <span id="pessoal-count" class="section-head__meta">0</span>
+        </div>
+        <div id="lista-pessoal" class="lista-mercado"></div>
+        <p id="empty-pessoal" class="empty empty--sm">Nenhuma despesa pessoal neste mês.</p>
+
+        <div id="pessoal-compartilhar" class="form" style="margin-top:1.5rem">
+          <fieldset class="fieldset">
+            <legend class="fieldset__legend">Quem divide esta lista comigo</legend>
+            <p class="fieldset__hint">Quem você liberar pode ver, lançar e excluir despesas nesta lista (ex.: você e sua esposa).</p>
+            <div class="row-add">
+              <label class="field field--grow">
+                <span class="field__label">Usuário</span>
+                <select id="pessoal-viewer">
+                  <option value="">Selecione…</option>
+                </select>
+              </label>
+              <button type="button" id="btn-pessoal-compartilhar" class="btn btn--secondary">Convidar</button>
+            </div>
+            <ul id="lista-pessoal-acessos" class="lista-pessoas"></ul>
+            <p id="empty-pessoal-acessos" class="empty empty--sm hidden">Só você controla esta lista por enquanto.</p>
+          </fieldset>
+        </div>
       </section>
 
       <!-- Relatório -->

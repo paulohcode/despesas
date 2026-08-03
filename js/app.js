@@ -18,6 +18,19 @@
     { id: "td-internet", nome: "Internet" },
     { id: "td-condominio", nome: "Condomínio" },
   ];
+  const DEFAULT_PESSOAL_TIPOS = ["Compra", "Serviço", "Assinatura", "Outro"];
+  const DEFAULT_PESSOAL_CATEGORIAS = [
+    "Alimentação",
+    "Combustível",
+    "Saúde",
+    "Moradia",
+    "Transporte",
+    "Lazer",
+    "Educação",
+    "Vestuário",
+    "Outros",
+  ];
+  const DEFAULT_PESSOAL_PAGAMENTOS = ["PIX", "Crédito", "Débito", "Dinheiro"];
 
   const MESES_NOME = [
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -37,6 +50,7 @@
     pix: "PIX",
     dinheiro: "Dinheiro",
     debito: "Débito",
+    outro: "Outro",
   };
 
   let state = loadState();
@@ -44,6 +58,8 @@
   let codigoCasa = localStorage.getItem(CASA_KEY) || CASA_PADRAO;
   let mesSelecionado = state.mesAtual || state.meses[0]?.id || null;
   let relatorioModo = "casa"; // casa | vaquinha | pendencias
+  let pessoalDonoId = null;
+  let pessoalMesId = todayISO().slice(0, 7);
   let deferredInstallPrompt = null;
   let toastTimer = null;
   let syncRef = null;
@@ -98,6 +114,11 @@
         pessoas,
         tiposDespesa,
         pendencias: Array.isArray(parsed.pendencias) ? parsed.pendencias : [],
+        pessoais: Array.isArray(parsed.pessoais) ? parsed.pessoais : [],
+        pessoalAcessos: Array.isArray(parsed.pessoalAcessos) ? parsed.pessoalAcessos : [],
+        pessoalTipos: Array.isArray(parsed.pessoalTipos) ? parsed.pessoalTipos : [],
+        pessoalCategorias: Array.isArray(parsed.pessoalCategorias) ? parsed.pessoalCategorias : [],
+        pessoalPagamentos: Array.isArray(parsed.pessoalPagamentos) ? parsed.pessoalPagamentos : [],
         notificacoes: Array.isArray(parsed.notificacoes) ? parsed.notificacoes : [],
         updatedAt: Number(parsed.updatedAt) || 0,
       };
@@ -117,6 +138,11 @@
       pessoas: [],
       tiposDespesa: DEFAULT_TIPOS_DESPESA.map((t) => ({ ...t })),
       pendencias: [],
+      pessoais: [],
+      pessoalAcessos: [],
+      pessoalTipos: [],
+      pessoalCategorias: [],
+      pessoalPagamentos: [],
       notificacoes: [],
       updatedAt: 0,
     };
@@ -258,6 +284,11 @@
       pessoas: state.pessoas,
       tiposDespesa: state.tiposDespesa,
       pendencias: state.pendencias,
+      pessoais: state.pessoais,
+      pessoalAcessos: state.pessoalAcessos,
+      pessoalTipos: state.pessoalTipos,
+      pessoalCategorias: state.pessoalCategorias,
+      pessoalPagamentos: state.pessoalPagamentos,
       notificacoes: state.notificacoes,
     };
   }
@@ -280,6 +311,11 @@
       pessoas: Array.isArray(payload.pessoas) ? payload.pessoas : [],
       tiposDespesa: normalizarTiposDespesa(payload.tiposDespesa),
       pendencias: Array.isArray(payload.pendencias) ? payload.pendencias : [],
+      pessoais: Array.isArray(payload.pessoais) ? payload.pessoais : [],
+      pessoalAcessos: Array.isArray(payload.pessoalAcessos) ? payload.pessoalAcessos : [],
+      pessoalTipos: Array.isArray(payload.pessoalTipos) ? payload.pessoalTipos : [],
+      pessoalCategorias: Array.isArray(payload.pessoalCategorias) ? payload.pessoalCategorias : [],
+      pessoalPagamentos: Array.isArray(payload.pessoalPagamentos) ? payload.pessoalPagamentos : [],
       notificacoes: Array.isArray(payload.notificacoes) ? payload.notificacoes : [],
       updatedAt: remoteAt || Date.now(),
     };
@@ -309,6 +345,7 @@
       renderDespesaLista();
       renderPendencias();
       fillPendenciaPessoas();
+      renderPessoal();
       renderLoginUI();
       fillConfigForm();
     } else {
@@ -692,6 +729,9 @@
     renderDespesaLista();
     renderPendencias();
     fillPendenciaPessoas();
+    pessoalDonoId = pessoa.id;
+    pessoalMesId = currentMonthId();
+    renderPessoal();
     fillConfigForm();
     setSyncStatus(syncStatus);
     toast(`Bem-vindo(a), ${pessoa.nome}${isAdmin() ? " (admin)" : ""}!`);
@@ -801,6 +841,7 @@
           fillPendenciaPessoas();
           renderPendencias();
         }
+        if (tab === "pessoal") renderPessoal();
       });
     });
   }
@@ -1456,7 +1497,643 @@
     initRelatorioSwitch();
     initEncontroUI();
     initPendencias();
+    initPessoal();
     initNotifUI();
+  }
+
+  /* ---------- Despesas pessoais ---------- */
+  function podeVerPessoalDe(donoId) {
+    const u = usuarioAtual();
+    if (!u || !donoId) return false;
+    if (u.id === donoId) return true;
+    return (state.pessoalAcessos || []).some(
+      (a) => a.donoId === donoId && a.viewerId === u.id
+    );
+  }
+
+  function podeEditarPessoalDe(donoId) {
+    return podeVerPessoalDe(donoId);
+  }
+
+  function idsParticipantesPessoal(donoId, excetoId = null) {
+    const ids = new Set([donoId]);
+    (state.pessoalAcessos || []).forEach((a) => {
+      if (a.donoId === donoId) ids.add(a.viewerId);
+    });
+    if (excetoId) ids.delete(excetoId);
+    return [...ids].filter(Boolean);
+  }
+
+  function donosPessoalDisponiveis() {
+    const u = usuarioAtual();
+    if (!u) return [];
+    const ids = new Set([u.id]);
+    (state.pessoalAcessos || []).forEach((a) => {
+      if (a.viewerId === u.id) ids.add(a.donoId);
+    });
+    return state.pessoas
+      .filter((p) => ids.has(p.id))
+      .sort((a, b) => {
+        if (a.id === u.id) return -1;
+        if (b.id === u.id) return 1;
+        return a.nome.localeCompare(b.nome, "pt-BR");
+      });
+  }
+
+  function limparDadosPessoalDaPessoa(pessoaId) {
+    state.pessoais = (state.pessoais || []).filter((p) => p.donoId !== pessoaId);
+    state.pessoalAcessos = (state.pessoalAcessos || []).filter(
+      (a) => a.donoId !== pessoaId && a.viewerId !== pessoaId
+    );
+    state.pessoalTipos = (state.pessoalTipos || []).filter((t) => t.donoId !== pessoaId);
+    state.pessoalCategorias = (state.pessoalCategorias || []).filter((c) => c.donoId !== pessoaId);
+    state.pessoalPagamentos = (state.pessoalPagamentos || []).filter((p) => p.donoId !== pessoaId);
+  }
+
+  function listaCadastroPessoal(chave, donoId) {
+    return (state[chave] || [])
+      .filter((x) => x.donoId === donoId)
+      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }
+
+  function ensurePessoalCadastros(donoId) {
+    if (!donoId) return false;
+    let mudou = false;
+    const seed = (chave, nomes) => {
+      if ((state[chave] || []).some((x) => x.donoId === donoId)) return;
+      if (!Array.isArray(state[chave])) state[chave] = [];
+      nomes.forEach((nome) => {
+        state[chave].push({ id: uid(), donoId, nome });
+      });
+      mudou = true;
+    };
+    seed("pessoalTipos", DEFAULT_PESSOAL_TIPOS);
+    seed("pessoalCategorias", DEFAULT_PESSOAL_CATEGORIAS);
+    seed("pessoalPagamentos", DEFAULT_PESSOAL_PAGAMENTOS);
+    return mudou;
+  }
+
+  function labelPagamentoPessoal(item) {
+    if (item.pagamentoNome) return item.pagamentoNome;
+    if (item.pagamentoId) {
+      const p = (state.pessoalPagamentos || []).find((x) => x.id === item.pagamentoId);
+      if (p) return p.nome;
+    }
+    return PAGAMENTOS[item.pagamento] || item.pagamento || "—";
+  }
+
+  function labelCategoriaPessoal(item) {
+    if (item.categoriaNome) return item.categoriaNome;
+    if (item.categoriaId) {
+      const c = (state.pessoalCategorias || []).find((x) => x.id === item.categoriaId);
+      if (c) return c.nome;
+    }
+    return item.categoria || "—";
+  }
+
+  function labelTipoPessoal(item) {
+    if (item.tipoNome) return item.tipoNome;
+    if (item.tipoId) {
+      const t = (state.pessoalTipos || []).find((x) => x.id === item.tipoId);
+      if (t) return t.nome;
+    }
+    return "—";
+  }
+
+  function fillPessoalMesSelect() {
+    const select = $("#pessoal-mes");
+    if (!select) return;
+    const donoId = pessoalDonoId || usuarioAtualId;
+    const meses = new Set([pessoalMesId || currentMonthId(), currentMonthId()]);
+    (state.pessoais || [])
+      .filter((p) => p.donoId === donoId)
+      .forEach((p) => {
+        const m = (p.data || "").slice(0, 7);
+        if (m) meses.add(m);
+      });
+    const ordenados = [...meses].filter(Boolean).sort().reverse();
+    if (!ordenados.includes(pessoalMesId)) pessoalMesId = ordenados[0] || currentMonthId();
+    select.innerHTML = ordenados
+      .map((id) => `<option value="${id}">${escapeHtml(labelMes(id))}</option>`)
+      .join("");
+    select.value = pessoalMesId;
+  }
+
+  function fillPessoalListaSelect() {
+    const select = $("#pessoal-lista");
+    if (!select) return;
+    const u = usuarioAtual();
+    const donos = donosPessoalDisponiveis();
+    if (!pessoalDonoId || !donos.some((d) => d.id === pessoalDonoId)) {
+      pessoalDonoId = u?.id || donos[0]?.id || null;
+    }
+    select.innerHTML = donos
+      .map((p) => {
+        const label = p.id === u?.id ? `${p.nome} (minha lista)` : p.nome;
+        return `<option value="${p.id}">${escapeHtml(label)}</option>`;
+      })
+      .join("");
+    if (pessoalDonoId) select.value = pessoalDonoId;
+  }
+
+  function fillPessoalViewerSelect() {
+    const select = $("#pessoal-viewer");
+    if (!select) return;
+    const ja = new Set(
+      (state.pessoalAcessos || [])
+        .filter((a) => a.donoId === usuarioAtualId)
+        .map((a) => a.viewerId)
+    );
+    const candidatos = state.pessoas.filter(
+      (p) => p.id !== usuarioAtualId && !ja.has(p.id)
+    );
+    select.innerHTML =
+      `<option value="">Selecione…</option>` +
+      candidatos.map((p) => `<option value="${p.id}">${escapeHtml(p.nome)}</option>`).join("");
+  }
+
+  function fillPessoalSelectsCadastro(donoId) {
+    const tipos = listaCadastroPessoal("pessoalTipos", donoId);
+    const cats = listaCadastroPessoal("pessoalCategorias", donoId);
+    const pags = listaCadastroPessoal("pessoalPagamentos", donoId);
+
+    const selTipo = $("#pessoal-tipo");
+    const selCat = $("#pessoal-categoria");
+    const selPag = $("#pessoal-pagamento");
+    const prevTipo = selTipo?.value;
+    const prevCat = selCat?.value;
+    const prevPag = selPag?.value;
+
+    if (selTipo) {
+      selTipo.innerHTML =
+        `<option value="">Selecione…</option>` +
+        tipos.map((t) => `<option value="${t.id}">${escapeHtml(t.nome)}</option>`).join("");
+      if (prevTipo && tipos.some((t) => t.id === prevTipo)) selTipo.value = prevTipo;
+    }
+    if (selCat) {
+      selCat.innerHTML =
+        `<option value="">Selecione…</option>` +
+        cats.map((c) => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join("");
+      if (prevCat && cats.some((c) => c.id === prevCat)) selCat.value = prevCat;
+    }
+    if (selPag) {
+      selPag.innerHTML =
+        `<option value="">Selecione…</option>` +
+        pags.map((p) => `<option value="${p.id}">${escapeHtml(p.nome)}</option>`).join("");
+      if (prevPag && pags.some((p) => p.id === prevPag)) selPag.value = prevPag;
+    }
+  }
+
+  function renderListaCadastroPessoal({ chave, listaId, emptyId, btnClass, podeEditar }) {
+    const lista = $(listaId);
+    const empty = $(emptyId);
+    if (!lista || !empty) return;
+    const donoId = pessoalDonoId || usuarioAtualId;
+    const items = listaCadastroPessoal(chave, donoId);
+
+    if (!items.length) {
+      lista.innerHTML = "";
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+    lista.innerHTML = items
+      .map(
+        (item) => `
+      <li class="lista-pessoas__item">
+        <span>${escapeHtml(item.nome)}</span>
+        ${
+          podeEditar
+            ? `<button type="button" class="btn btn--icon ${btnClass}" data-id="${item.id}" title="Remover">×</button>`
+            : ""
+        }
+      </li>`
+      )
+      .join("");
+
+    lista.querySelectorAll(`.${btnClass}`).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!podeEditarPessoalDe(donoId)) return toast("Sem permissão.");
+        const item = (state[chave] || []).find((x) => x.id === btn.dataset.id);
+        if (!item || item.donoId !== donoId) return;
+        if (!confirm(`Remover "${item.nome}"?`)) return;
+        state[chave] = state[chave].filter((x) => x.id !== item.id);
+        saveState();
+        renderPessoal();
+        toast("Removido.");
+      });
+    });
+  }
+
+  function renderPessoalCadastros(donoId, podeEditar) {
+    const box = $("#pessoal-cadastros");
+    if (box) {
+      box.classList.toggle("hidden", !podeEditar);
+      $$("#pessoal-cadastros input, #pessoal-cadastros button").forEach((el) => {
+        el.disabled = !podeEditar;
+      });
+    }
+    if (!podeEditar) return;
+
+    renderListaCadastroPessoal({
+      chave: "pessoalTipos",
+      listaId: "#lista-pessoal-tipos",
+      emptyId: "#empty-pessoal-tipos",
+      btnClass: "btn-rm-pessoal-tipo",
+      podeEditar,
+    });
+    renderListaCadastroPessoal({
+      chave: "pessoalCategorias",
+      listaId: "#lista-pessoal-cats",
+      emptyId: "#empty-pessoal-cats",
+      btnClass: "btn-rm-pessoal-cat",
+      podeEditar,
+    });
+    renderListaCadastroPessoal({
+      chave: "pessoalPagamentos",
+      listaId: "#lista-pessoal-pags",
+      emptyId: "#empty-pessoal-pags",
+      btnClass: "btn-rm-pessoal-pag",
+      podeEditar,
+    });
+  }
+
+  function adicionarCadastroPessoal(chave, inputId, rotulo) {
+    const u = usuarioAtual();
+    if (!u) return;
+    const donoId = pessoalDonoId || u.id;
+    if (!podeEditarPessoalDe(donoId)) return toast("Sem permissão.");
+    const input = $(inputId);
+    const nome = (input?.value || "").trim().replace(/\s+/g, " ");
+    if (!nome) return toast(`Informe o nome d${rotulo}.`);
+    if (!Array.isArray(state[chave])) state[chave] = [];
+    if (
+      state[chave].some(
+        (x) => x.donoId === donoId && x.nome.toLowerCase() === nome.toLowerCase()
+      )
+    ) {
+      return toast("Já cadastrado.");
+    }
+    state[chave].push({ id: uid(), donoId, nome });
+    if (input) input.value = "";
+    saveState();
+    renderPessoal();
+    toast(`${nome} adicionado.`);
+  }
+
+  function renderPessoalAcessos() {
+    const lista = $("#lista-pessoal-acessos");
+    const empty = $("#empty-pessoal-acessos");
+    const box = $("#pessoal-compartilhar");
+    if (!lista || !empty || !box) return;
+
+    const souDono = pessoalDonoId === usuarioAtualId;
+    box.classList.toggle("hidden", !souDono);
+    if (!souDono) return;
+
+    const acessos = (state.pessoalAcessos || []).filter((a) => a.donoId === usuarioAtualId);
+    fillPessoalViewerSelect();
+
+    if (!acessos.length) {
+      lista.innerHTML = "";
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+    lista.innerHTML = acessos
+      .map((a) => {
+        const nome =
+          state.pessoas.find((p) => p.id === a.viewerId)?.nome || a.viewerNome || "—";
+        return `
+      <li class="lista-pessoas__item">
+        <span>${escapeHtml(nome)}</span>
+        <button type="button" class="btn btn--icon btn-revogar-pessoal" data-id="${a.id}" title="Remover acesso">×</button>
+      </li>`;
+      })
+      .join("");
+
+    lista.querySelectorAll(".btn-revogar-pessoal").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const acesso = (state.pessoalAcessos || []).find((a) => a.id === btn.dataset.id);
+        if (!acesso || acesso.donoId !== usuarioAtualId) return;
+        if (!confirm(`Remover o acesso de ${acesso.viewerNome || "este usuário"}?`)) return;
+        state.pessoalAcessos = state.pessoalAcessos.filter((a) => a.id !== acesso.id);
+        notificar({
+          paraUserIds: [acesso.viewerId],
+          titulo: "Acesso removido",
+          texto: `${usuarioAtual()?.nome || "Alguém"} removeu seu acesso à lista pessoal compartilhada.`,
+          tipo: "pessoal",
+          refId: acesso.id,
+        });
+        saveState();
+        updateNotifBadge();
+        renderPessoal();
+        toast("Acesso removido.");
+      });
+    });
+  }
+
+  function renderPessoal() {
+    const u = usuarioAtual();
+    if (!u) return;
+
+    fillPessoalListaSelect();
+    fillPessoalMesSelect();
+
+    const donoId = pessoalDonoId || u.id;
+    if (ensurePessoalCadastros(donoId)) saveState();
+
+    const podeVer = podeVerPessoalDe(donoId);
+    const podeEditar = podeEditarPessoalDe(donoId);
+    const souDono = donoId === u.id;
+    const form = $("#form-pessoal");
+    const aviso = $("#aviso-pessoal-compartilhada");
+
+    fillPessoalSelectsCadastro(donoId);
+    renderPessoalCadastros(donoId, podeEditar);
+
+    if (form) {
+      form.classList.toggle("hidden", !podeEditar);
+      $$("#form-pessoal input, #form-pessoal select, #form-pessoal button").forEach((el) => {
+        el.disabled = !podeEditar;
+      });
+    }
+    aviso?.classList.toggle("hidden", souDono || !podeVer);
+
+    renderPessoalAcessos();
+
+    const box = $("#lista-pessoal");
+    const empty = $("#empty-pessoal");
+    const totalBox = $("#pessoal-total");
+    const porCatBox = $("#pessoal-por-categoria");
+    const countEl = $("#pessoal-count");
+    if (!box || !empty) return;
+
+    if (!podeVer) {
+      box.innerHTML = "";
+      empty.textContent = "Você não tem acesso a esta lista.";
+      empty.classList.remove("hidden");
+      if (countEl) countEl.textContent = "0";
+      totalBox?.classList.add("hidden");
+      if (porCatBox) porCatBox.innerHTML = "";
+      return;
+    }
+
+    const mesId = pessoalMesId || currentMonthId();
+    const items = (state.pessoais || [])
+      .filter((p) => p.donoId === donoId && (p.data || "").slice(0, 7) === mesId)
+      .sort((a, b) => {
+        if (a.data === b.data) return (b.criadoEm || "").localeCompare(a.criadoEm || "");
+        return (b.data || "").localeCompare(a.data || "");
+      });
+
+    const total = items.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
+    if (countEl) countEl.textContent = String(items.length);
+
+    if (totalBox) {
+      if (!items.length) {
+        totalBox.classList.add("hidden");
+        totalBox.innerHTML = "";
+      } else {
+        totalBox.classList.remove("hidden");
+        const donoNome =
+          state.pessoas.find((p) => p.id === donoId)?.nome ||
+          (souDono ? "Você" : "—");
+        const tituloLista = souDono ? "Minha lista" : `Lista de ${donoNome}`;
+        totalBox.innerHTML = `
+          <p class="mercado-total__label">${escapeHtml(tituloLista)} · ${escapeHtml(labelMes(mesId))}</p>
+          <p class="mercado-total__valor">${formatMoney(total)}</p>`;
+      }
+    }
+
+    if (porCatBox) {
+      if (!items.length) {
+        porCatBox.innerHTML = "";
+      } else {
+        const mapa = {};
+        items.forEach((item) => {
+          const nome = labelCategoriaPessoal(item) || "Sem categoria";
+          mapa[nome] = (mapa[nome] || 0) + (Number(item.valor) || 0);
+        });
+        const linhas = Object.entries(mapa).sort((a, b) => b[1] - a[1]);
+        porCatBox.innerHTML = `
+          <div class="card-resumo">
+            <p class="card-resumo__label">Por categoria</p>
+            <div class="grupos-grid" style="margin-top:0.6rem">
+              ${linhas
+                .map(
+                  ([nome, valor]) => `
+                <div class="card-grupo">
+                  <p class="card-grupo__nome">${escapeHtml(nome)}</p>
+                  <p class="card-grupo__valor">${formatMoney(valor)}</p>
+                </div>`
+                )
+                .join("")}
+            </div>
+          </div>`;
+      }
+    }
+
+    if (!items.length) {
+      box.innerHTML = "";
+      empty.textContent = "Nenhuma despesa pessoal neste mês.";
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+
+    box.innerHTML = items
+      .map((item) => {
+        const tipo = labelTipoPessoal(item);
+        const pag = labelPagamentoPessoal(item);
+        const cat = labelCategoriaPessoal(item);
+        const por = item.criadoPorNome
+          ? `<p class="mercado-item__por">por ${escapeHtml(item.criadoPorNome)}</p>`
+          : "";
+        const acao = podeEditar
+          ? `<button type="button" class="btn btn--ghost btn--sm btn-excluir-pessoal" data-id="${item.id}">Excluir</button>`
+          : "";
+        return `
+      <article class="mercado-item">
+        <div>
+          <p class="mercado-item__meta">${formatDate(item.data)} · ${escapeHtml(tipo)} · ${escapeHtml(cat)} · ${escapeHtml(pag)}</p>
+          <p class="mercado-item__detalhe">${escapeHtml(item.descricao)}</p>
+          ${por}
+        </div>
+        <div class="mercado-item__rodape">
+          <p class="mercado-item__valor">${formatMoney(item.valor)}</p>
+          ${acao}
+        </div>
+      </article>`;
+      })
+      .join("");
+
+    box.querySelectorAll(".btn-excluir-pessoal").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const item = (state.pessoais || []).find((p) => p.id === btn.dataset.id);
+        if (!item || !podeEditarPessoalDe(item.donoId)) {
+          return toast("Sem permissão para excluir nesta lista.");
+        }
+        if (!confirm(`Excluir "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
+        const autor = usuarioAtual();
+        state.pessoais = state.pessoais.filter((p) => p.id !== item.id);
+        const outros = idsParticipantesPessoal(item.donoId, autor?.id);
+        if (outros.length) {
+          notificar({
+            paraUserIds: outros,
+            titulo: "Despesa pessoal excluída",
+            texto: `${autor?.nome || "Alguém"} excluiu "${item.descricao}" (${formatMoney(item.valor)}).`,
+            tipo: "pessoal",
+            refId: item.id,
+          });
+        }
+        saveState();
+        updateNotifBadge();
+        renderPessoal();
+        toast("Despesa pessoal excluída.");
+      });
+    });
+  }
+
+  function initPessoal() {
+    const dataEl = $("#pessoal-data");
+    if (dataEl) dataEl.value = todayISO();
+
+    $("#pessoal-lista")?.addEventListener("change", (e) => {
+      pessoalDonoId = e.target.value || usuarioAtualId;
+      renderPessoal();
+    });
+
+    $("#pessoal-mes")?.addEventListener("change", (e) => {
+      pessoalMesId = e.target.value || currentMonthId();
+      renderPessoal();
+    });
+
+    $("#btn-add-pessoal-tipo")?.addEventListener("click", () =>
+      adicionarCadastroPessoal("pessoalTipos", "#pessoal-tipo-nome", "o tipo")
+    );
+    $("#btn-add-pessoal-cat")?.addEventListener("click", () =>
+      adicionarCadastroPessoal("pessoalCategorias", "#pessoal-cat-nome", "a categoria")
+    );
+    $("#btn-add-pessoal-pag")?.addEventListener("click", () =>
+      adicionarCadastroPessoal("pessoalPagamentos", "#pessoal-pag-nome", "a forma de pagamento")
+    );
+
+    ["#pessoal-tipo-nome", "#pessoal-cat-nome", "#pessoal-pag-nome"].forEach((sel) => {
+      $(sel)?.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        if (sel.includes("tipo")) $("#btn-add-pessoal-tipo")?.click();
+        else if (sel.includes("cat")) $("#btn-add-pessoal-cat")?.click();
+        else $("#btn-add-pessoal-pag")?.click();
+      });
+    });
+
+    $("#form-pessoal")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const u = usuarioAtual();
+      if (!u) return toast("Faça login.");
+      const donoId = pessoalDonoId || u.id;
+      if (!podeEditarPessoalDe(donoId)) {
+        return toast("Sem permissão para lançar nesta lista.");
+      }
+      const dono = state.pessoas.find((p) => p.id === donoId) || u;
+      const descricao = $("#pessoal-descricao").value.trim();
+      const data = $("#pessoal-data").value;
+      const tipoId = $("#pessoal-tipo").value;
+      const categoriaId = $("#pessoal-categoria").value;
+      const pagamentoId = $("#pessoal-pagamento").value;
+      const valor = Number($("#pessoal-valor").value);
+      const tipo = (state.pessoalTipos || []).find((t) => t.id === tipoId && t.donoId === donoId);
+      const categoria = (state.pessoalCategorias || []).find(
+        (c) => c.id === categoriaId && c.donoId === donoId
+      );
+      const pagamento = (state.pessoalPagamentos || []).find(
+        (p) => p.id === pagamentoId && p.donoId === donoId
+      );
+
+      if (!descricao || !data || !(valor > 0)) {
+        return toast("Preencha descrição, data e valor.");
+      }
+      if (!tipo || !categoria || !pagamento) {
+        return toast("Selecione tipo, categoria e forma de pagamento.");
+      }
+
+      const item = {
+        id: uid(),
+        donoId: dono.id,
+        donoNome: dono.nome,
+        descricao,
+        data,
+        tipoId: tipo.id,
+        tipoNome: tipo.nome,
+        categoriaId: categoria.id,
+        categoriaNome: categoria.nome,
+        categoria: categoria.nome,
+        pagamentoId: pagamento.id,
+        pagamentoNome: pagamento.nome,
+        pagamento: pagamento.nome,
+        valor,
+        criadoPorId: u.id,
+        criadoPorNome: u.nome,
+        criadoEm: new Date().toISOString(),
+      };
+      if (!Array.isArray(state.pessoais)) state.pessoais = [];
+      state.pessoais.unshift(item);
+
+      const outros = idsParticipantesPessoal(dono.id, u.id);
+      if (outros.length) {
+        notificar({
+          paraUserIds: outros,
+          titulo: "Nova despesa pessoal",
+          texto: `${u.nome} lançou "${descricao}" (${categoria.nome}) de ${formatMoney(valor)}.`,
+          tipo: "pessoal",
+          refId: item.id,
+        });
+      }
+
+      saveState();
+      updateNotifBadge();
+      e.target.reset();
+      $("#pessoal-data").value = todayISO();
+      pessoalDonoId = dono.id;
+      pessoalMesId = data.slice(0, 7);
+      renderPessoal();
+      toast("Despesa pessoal salva.");
+    });
+
+    $("#btn-pessoal-compartilhar")?.addEventListener("click", () => {
+      const u = usuarioAtual();
+      if (!u) return;
+      const viewerId = $("#pessoal-viewer")?.value;
+      const viewer = state.pessoas.find((p) => p.id === viewerId);
+      if (!viewer) return toast("Selecione um usuário.");
+      const ja = (state.pessoalAcessos || []).some(
+        (a) => a.donoId === u.id && a.viewerId === viewer.id
+      );
+      if (ja) return toast("Esse usuário já está na lista.");
+
+      if (!Array.isArray(state.pessoalAcessos)) state.pessoalAcessos = [];
+      const acesso = {
+        id: uid(),
+        donoId: u.id,
+        viewerId: viewer.id,
+        viewerNome: viewer.nome,
+        criadoEm: new Date().toISOString(),
+      };
+      state.pessoalAcessos.push(acesso);
+      notificar({
+        paraUserIds: [viewer.id],
+        titulo: "Lista pessoal compartilhada",
+        texto: `${u.nome} convidou você para dividir a lista pessoal — podem lançar e excluir juntos.`,
+        tipo: "pessoal",
+        refId: acesso.id,
+      });
+      saveState();
+      updateNotifBadge();
+      renderPessoal();
+      toast(`${viewer.nome} agora divide sua lista.`);
+    });
   }
 
   /* ---------- Pendências ---------- */
@@ -2073,12 +2750,14 @@
           return toast("Não é possível remover o admin.");
         }
         if (!confirm(`Remover o usuário ${pessoa.nome}?`)) return;
+        limparDadosPessoalDaPessoa(id);
         state.pessoas = state.pessoas.filter((p) => p.id !== id);
         saveState();
         renderPessoasLista();
         renderVaquinhaUI();
         fillPendenciaPessoas();
         renderLoginUI();
+        renderPessoal();
         toast(`${pessoa.nome} removido(a).`);
       });
     });

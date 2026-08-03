@@ -950,6 +950,29 @@ select {
   gap: 0.45rem;
 }
 
+.pessoal-cadastros {
+  border: 1px solid var(--line, #d5e0db);
+  border-radius: 12px;
+  padding: 0.75rem 1rem 1rem;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.pessoal-cadastros__summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--ink, #1a2e28);
+  list-style: none;
+}
+
+.pessoal-cadastros__summary::-webkit-details-marker {
+  display: none;
+}
+
+.pessoal-cadastros[open] .pessoal-cadastros__summary {
+  margin-bottom: 0.25rem;
+}
+
 .lista-pessoas__item {
   display: flex;
   align-items: center;
