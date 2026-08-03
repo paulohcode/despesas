@@ -864,7 +864,8 @@ select {
   white-space: nowrap;
 }
 
-.pessoal-linha .btn--icon {
+.pessoal-linha .btn--icon,
+.pessoal-linha .btn--edit {
   flex-shrink: 0;
   margin-top: 0.05rem;
   width: 1.6rem;
@@ -1681,5 +1682,108 @@ select {
   .table th:nth-child(2),
   .table td:nth-child(2) {
     display: none;
+  }
+}
+
+.pessoal-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: flex-end;
+}
+
+.pessoal-filtros .field {
+  min-width: 0;
+}
+
+.pessoal-linha__acoes,
+.mercado-item__acoes,
+.acerto-item__acoes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.btn--edit {
+  background: color-mix(in srgb, var(--brand-soft) 70%, #fff);
+  color: var(--brand-deep);
+  border: 1px solid color-mix(in srgb, var(--brand) 25%, var(--line));
+  min-width: 2.1rem;
+  padding: 0.25rem 0.45rem;
+}
+
+.btn--edit:hover {
+  background: var(--brand-soft);
+}
+
+.acerto-item {
+  flex-wrap: wrap;
+}
+
+.acerto-item--quitado {
+  opacity: 0.78;
+}
+
+.acerto-lista--quitadas {
+  margin-top: 0.85rem;
+}
+
+.acerto-lista--quitadas .acerto-lista__titulo {
+  color: var(--ink-muted);
+}
+
+.export-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0 1rem;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  body.print-encontro #tab-encontro,
+  body.print-encontro #tab-encontro *,
+  body.print-relatorio #tab-relatorio,
+  body.print-relatorio #tab-relatorio * {
+    visibility: visible;
+  }
+
+  body.print-encontro #tab-encontro,
+  body.print-relatorio #tab-relatorio {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    display: block !important;
+  }
+
+  .no-print,
+  .nav,
+  .header,
+  .export-acoes,
+  .relatorio-switch,
+  form,
+  .aviso {
+    display: none !important;
+  }
+
+  body.print-encontro .btn,
+  body.print-relatorio .btn {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  .panel {
+    box-shadow: none;
+    border: 0;
+    padding: 0;
   }
 }

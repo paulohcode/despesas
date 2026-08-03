@@ -70,6 +70,13 @@
   let relatorioModo = "casa"; // casa | vaquinha | pendencias
   let pessoalDonoId = null;
   let pessoalMesId = todayISO().slice(0, 7);
+  let pessoalBusca = "";
+  let pessoalFiltroTipo = "todos"; // todos | despesas | receitas | fixas
+  let editingMercadoId = null;
+  let editingDespesaId = null;
+  let editingPessoalId = null;
+  let editingReceitaId = null;
+  let editingFixaId = null;
   let deferredInstallPrompt = null;
   let toastTimer = null;
   let syncRef = null;
@@ -134,6 +141,9 @@
         pessoalDespesasFixas: Array.isArray(parsed.pessoalDespesasFixas)
           ? parsed.pessoalDespesasFixas
           : [],
+        encontrosQuitacoes: Array.isArray(parsed.encontrosQuitacoes)
+          ? parsed.encontrosQuitacoes
+          : [],
         notificacoes: Array.isArray(parsed.notificacoes) ? parsed.notificacoes : [],
         updatedAt: Number(parsed.updatedAt) || 0,
       };
@@ -161,6 +171,7 @@
       pessoalCategorias: [],
       pessoalPagamentos: [],
       pessoalDespesasFixas: [],
+      encontrosQuitacoes: [],
       notificacoes: [],
       updatedAt: 0,
     };
@@ -250,6 +261,7 @@
       (Array.isArray(s.pessoais) ? s.pessoais.length : 0) * 2 +
       (Array.isArray(s.pessoalReceitas) ? s.pessoalReceitas.length : 0) * 2 +
       (Array.isArray(s.pessoalDespesasFixas) ? s.pessoalDespesasFixas.length : 0) +
+      (Array.isArray(s.encontrosQuitacoes) ? s.encontrosQuitacoes.length : 0) +
       meses.length * 3 +
       meses.filter((m) => m && m.status === "fechado").length * 5 +
       (Array.isArray(s.pessoas) ? s.pessoas.length : 0) +
@@ -397,6 +409,7 @@
       pessoalCategorias: state.pessoalCategorias,
       pessoalPagamentos: state.pessoalPagamentos,
       pessoalDespesasFixas: state.pessoalDespesasFixas,
+      encontrosQuitacoes: state.encontrosQuitacoes,
       notificacoes: state.notificacoes,
     };
   }
@@ -444,6 +457,9 @@
         pessoalPagamentos: Array.isArray(payload.pessoalPagamentos) ? payload.pessoalPagamentos : [],
         pessoalDespesasFixas: Array.isArray(payload.pessoalDespesasFixas)
           ? payload.pessoalDespesasFixas
+          : [],
+        encontrosQuitacoes: Array.isArray(payload.encontrosQuitacoes)
+          ? payload.encontrosQuitacoes
           : [],
         notificacoes: Array.isArray(payload.notificacoes) ? payload.notificacoes : [],
         updatedAt: remoteAt || Date.now(),
@@ -734,6 +750,59 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  function mesAnteriorId(mesId) {
+    if (!mesId || !/^\d{4}-\d{2}$/.test(mesId)) return null;
+    const [y, m] = mesId.split("-").map(Number);
+    const d = new Date(y, m - 2, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
+
+  function fingerprintTransferencia(mesId, escopo, deId, paraId, valor) {
+    return `${mesId}|${escopo}|${deId}|${paraId}|${Number(valor).toFixed(2)}`;
+  }
+
+  function quitacaoExiste(mesId, escopo, t) {
+    if (!mesId || !escopo || !t) return false;
+    const fp = fingerprintTransferencia(mesId, escopo, t.deId, t.paraId, t.valor);
+    return (state.encontrosQuitacoes || []).some(
+      (q) =>
+        fingerprintTransferencia(q.mesId, q.escopo, q.deId, q.paraId, q.valor) === fp
+    );
+  }
+
+  async function copiarTexto(texto) {
+    const str = String(texto || "");
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(str);
+        return true;
+      }
+    } catch {
+      /* fallback abaixo */
+    }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = str;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+
+  function setEditModeButtons(salvarId, cancelarId, editando, labelSalvar, labelEditar) {
+    const btnSalvar = $(salvarId);
+    const btnCancelar = $(cancelarId);
+    if (btnSalvar) btnSalvar.textContent = editando ? labelEditar : labelSalvar;
+    btnCancelar?.classList.toggle("hidden", !editando);
   }
 
   function somaPesos(grupos = state.grupos) {
@@ -1427,10 +1496,15 @@
     box.innerHTML = items
       .map((item) => {
         const meu = item.lancadoPorId && item.lancadoPorId === usuarioAtualId;
-        const acao =
-          meu && podeExcluirMes
-            ? `<button type="button" class="btn btn--ghost btn--sm btn-excluir-mercado" data-id="${item.id}">Excluir</button>`
-            : "";
+        const acoes = [];
+        if (meu && podeExcluirMes) {
+          acoes.push(
+            `<button type="button" class="btn btn--edit btn--sm btn-editar-mercado" data-id="${item.id}" title="Editar">✎</button>`
+          );
+          acoes.push(
+            `<button type="button" class="btn btn--ghost btn--sm btn-excluir-mercado" data-id="${item.id}">Excluir</button>`
+          );
+        }
         return `
       <article class="mercado-item">
         <div>
@@ -1440,11 +1514,15 @@
         <p class="mercado-item__valor">${formatMoney(item.valor)}</p>
         <div class="mercado-item__rodape">
           <p class="mercado-item__por">Por ${escapeHtml(item.lancadoPorNome || "—")}</p>
-          ${acao}
+          <div class="mercado-item__acoes">${acoes.join("")}</div>
         </div>
       </article>`;
       })
       .join("");
+
+    box.querySelectorAll(".btn-editar-mercado").forEach((btn) => {
+      btn.addEventListener("click", () => iniciarEdicaoMercado(btn.dataset.id));
+    });
 
     box.querySelectorAll(".btn-excluir-mercado").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1473,6 +1551,42 @@
         toast("Mercado excluído.");
       });
     });
+  }
+
+  function limparEdicaoMercado() {
+    editingMercadoId = null;
+    const form = $("#form-mercado");
+    form?.reset();
+    if ($("#mercado-data")) $("#mercado-data").value = todayISO();
+    fillSelectCompradores();
+    setEditModeButtons(
+      "#btn-salvar-mercado",
+      "#btn-cancelar-mercado",
+      false,
+      "Salvar mercado",
+      "Salvar alterações"
+    );
+  }
+
+  function iniciarEdicaoMercado(id) {
+    const item = state.lancamentos.find((l) => l.id === id && l.tipo === "mercado");
+    if (!item) return;
+    if (item.lancadoPorId !== usuarioAtualId) return toast("Só quem lançou pode editar.");
+    if (!mesEstaAberto(item.mesId)) return toast("Só é possível editar no mês aberto.");
+    editingMercadoId = item.id;
+    fillSelectCompradores();
+    $("#mercado-data").value = item.data || todayISO();
+    $("#mercado-comprador").value = item.comprador || "";
+    $("#mercado-pagamento").value = item.pagamento || "pix";
+    $("#mercado-valor").value = Number(item.valor) || "";
+    setEditModeButtons(
+      "#btn-salvar-mercado",
+      "#btn-cancelar-mercado",
+      true,
+      "Salvar mercado",
+      "Salvar alterações"
+    );
+    $("#form-mercado")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function renderDespesaLista() {
@@ -1517,10 +1631,15 @@
     box.innerHTML = items
       .map((item) => {
         const meu = item.lancadoPorId && item.lancadoPorId === usuarioAtualId;
-        const acao =
-          meu && podeExcluirMes
-            ? `<button type="button" class="btn btn--ghost btn--sm btn-excluir-despesa" data-id="${item.id}">Excluir</button>`
-            : "";
+        const acoes = [];
+        if (meu && podeExcluirMes) {
+          acoes.push(
+            `<button type="button" class="btn btn--edit btn--sm btn-editar-despesa" data-id="${item.id}" title="Editar">✎</button>`
+          );
+          acoes.push(
+            `<button type="button" class="btn btn--ghost btn--sm btn-excluir-despesa" data-id="${item.id}">Excluir</button>`
+          );
+        }
         const crit = item.criterio === "igual_3" ? "Partes iguais" : "Proporcional";
         const pag = PAGAMENTOS[item.pagamento] || item.pagamento || "—";
         return `
@@ -1533,11 +1652,15 @@
         <p class="mercado-item__valor">${formatMoney(item.valor)}</p>
         <div class="mercado-item__rodape">
           <p class="mercado-item__por">Por ${escapeHtml(item.lancadoPorNome || "—")}</p>
-          ${acao}
+          <div class="mercado-item__acoes">${acoes.join("")}</div>
         </div>
       </article>`;
       })
       .join("");
+
+    box.querySelectorAll(".btn-editar-despesa").forEach((btn) => {
+      btn.addEventListener("click", () => iniciarEdicaoDespesa(btn.dataset.id));
+    });
 
     box.querySelectorAll(".btn-excluir-despesa").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1566,6 +1689,46 @@
         toast("Despesa excluída.");
       });
     });
+  }
+
+  function limparEdicaoDespesa() {
+    editingDespesaId = null;
+    const form = $("#form-despesa");
+    form?.reset();
+    if ($("#despesa-data")) $("#despesa-data").value = todayISO();
+    fillSelectTiposDespesa();
+    fillSelectCompradores();
+    setEditModeButtons(
+      "#btn-salvar-despesa",
+      "#btn-cancelar-despesa",
+      false,
+      "Salvar despesa",
+      "Salvar alterações"
+    );
+  }
+
+  function iniciarEdicaoDespesa(id) {
+    const item = state.lancamentos.find((l) => l.id === id && l.tipo === "despesa");
+    if (!item) return;
+    if (item.lancadoPorId !== usuarioAtualId) return toast("Só quem lançou pode editar.");
+    if (!mesEstaAberto(item.mesId)) return toast("Só é possível editar no mês aberto.");
+    editingDespesaId = item.id;
+    fillSelectTiposDespesa(item.descricao || "");
+    fillSelectCompradores();
+    $("#despesa-descricao").value = item.descricao || "";
+    $("#despesa-data").value = item.data || todayISO();
+    $("#despesa-comprador").value = item.comprador || "";
+    $("#despesa-pagamento").value = item.pagamento || "pix";
+    $("#despesa-criterio").value = item.criterio === "igual_3" ? "igual_3" : "proporcional";
+    $("#despesa-valor").value = Number(item.valor) || "";
+    setEditModeButtons(
+      "#btn-salvar-despesa",
+      "#btn-cancelar-despesa",
+      true,
+      "Salvar despesa",
+      "Salvar alterações"
+    );
+    $("#form-despesa")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function fillFiltroMes() {
@@ -1611,6 +1774,44 @@
       if (data.slice(0, 7) !== state.mesAtual) return toast(`A data deve pertencer a ${labelMes(state.mesAtual)}.`);
 
       const autor = autorMeta();
+      const divisao = dividirValor(valor, "proporcional");
+
+      if (editingMercadoId) {
+        const existente = state.lancamentos.find(
+          (l) => l.id === editingMercadoId && l.tipo === "mercado"
+        );
+        if (!existente) {
+          limparEdicaoMercado();
+          return toast("Lançamento não encontrado.");
+        }
+        if (existente.lancadoPorId !== usuarioAtualId) {
+          return toast("Só quem lançou pode editar.");
+        }
+        if (!mesEstaAberto(existente.mesId)) {
+          return toast("Só é possível editar no mês aberto.");
+        }
+        existente.data = data;
+        existente.comprador = comprador;
+        existente.pagamento = pagamento;
+        existente.valor = valor;
+        existente.criterio = "proporcional";
+        existente.divisao = divisao;
+        notificarTodosExceto(autor.lancadoPorId, {
+          titulo: "Mercado editado",
+          texto: `${autor.lancadoPorNome} editou um mercado para ${formatMoney(valor)} (${formatDate(data)}).`,
+          tipo: "mercado",
+          refId: existente.id,
+        });
+        saveState();
+        updateNotifBadge();
+        limparEdicaoMercado();
+        renderMercadoLista();
+        renderRelatorio();
+        renderEncontro();
+        toast("Mercado atualizado.");
+        return;
+      }
+
       const item = {
         id: uid(),
         mesId: state.mesAtual,
@@ -1620,7 +1821,7 @@
         pagamento,
         valor,
         criterio: "proporcional",
-        divisao: dividirValor(valor, "proporcional"),
+        divisao,
         ...autor,
         criadoEm: new Date().toISOString(),
       };
@@ -1638,6 +1839,11 @@
       fillSelectCompradores();
       renderMercadoLista();
       toast("Mercado lançado.");
+    });
+
+    $("#btn-cancelar-mercado")?.addEventListener("click", () => {
+      limparEdicaoMercado();
+      toast("Edição cancelada.");
     });
 
     $("#despesa-descricao").addEventListener("change", () => {
@@ -1683,6 +1889,45 @@
       if (data.slice(0, 7) !== state.mesAtual) return toast(`A data deve pertencer a ${labelMes(state.mesAtual)}.`);
 
       const autor = autorMeta();
+      const divisao = dividirValor(valor, criterio);
+
+      if (editingDespesaId) {
+        const existente = state.lancamentos.find(
+          (l) => l.id === editingDespesaId && l.tipo === "despesa"
+        );
+        if (!existente) {
+          limparEdicaoDespesa();
+          return toast("Lançamento não encontrado.");
+        }
+        if (existente.lancadoPorId !== usuarioAtualId) {
+          return toast("Só quem lançou pode editar.");
+        }
+        if (!mesEstaAberto(existente.mesId)) {
+          return toast("Só é possível editar no mês aberto.");
+        }
+        existente.descricao = descricao;
+        existente.data = data;
+        existente.comprador = comprador;
+        existente.pagamento = pagamento;
+        existente.criterio = criterio;
+        existente.valor = valor;
+        existente.divisao = divisao;
+        notificarTodosExceto(autor.lancadoPorId, {
+          titulo: "Despesa editada",
+          texto: `${autor.lancadoPorNome} editou "${descricao}" para ${formatMoney(valor)}.`,
+          tipo: "despesa",
+          refId: existente.id,
+        });
+        saveState();
+        updateNotifBadge();
+        limparEdicaoDespesa();
+        renderDespesaLista();
+        renderRelatorio();
+        renderEncontro();
+        toast("Despesa atualizada.");
+        return;
+      }
+
       const item = {
         id: uid(),
         mesId: state.mesAtual,
@@ -1693,7 +1938,7 @@
         pagamento,
         criterio,
         valor,
-        divisao: dividirValor(valor, criterio),
+        divisao,
         ...autor,
         criadoEm: new Date().toISOString(),
       };
@@ -1712,6 +1957,11 @@
       fillSelectCompradores();
       renderDespesaLista();
       toast("Despesa lançada.");
+    });
+
+    $("#btn-cancelar-despesa")?.addEventListener("click", () => {
+      limparEdicaoDespesa();
+      toast("Edição cancelada.");
     });
 
     $("#form-pessoa").addEventListener("submit", (e) => {
@@ -2405,12 +2655,19 @@
         const paga = fixaPagaNoMes(f.id, donoId, mesId);
         const cat = f.categoriaNome || labelCategoriaPessoal(f);
         const dia = f.diaVencimento ? `dia ${f.diaVencimento}` : "sem dia";
-        const acao = !podeEditar
-          ? ""
-          : paga
-            ? `<span class="fixa-item__badge">Pago em ${escapeHtml(labelMes(mesId))}</span>`
-            : `<select class="fixa-item__pag" data-id="${f.id}" aria-label="Forma de pagamento">${optsPag}</select>
+        let acao = "";
+        if (podeEditar) {
+          if (paga) {
+            acao = `<span class="fixa-item__badge">Pago em ${escapeHtml(labelMes(mesId))}</span>
+               <button type="button" class="btn btn--ghost btn--sm btn-desfazer-fixa" data-id="${f.id}">Desfazer</button>`;
+          } else {
+            acao = `<select class="fixa-item__pag" data-id="${f.id}" aria-label="Forma de pagamento">${optsPag}</select>
                <button type="button" class="btn btn--primary btn--sm btn-pagar-fixa" data-id="${f.id}">Pagar</button>`;
+          }
+        }
+        const editar = podeEditar
+          ? `<button type="button" class="btn btn--edit btn--sm btn-editar-fixa" data-id="${f.id}" title="Editar">✎</button>`
+          : "";
         const excluir = podeEditar
           ? `<button type="button" class="btn btn--icon btn-excluir-fixa" data-id="${f.id}" title="Remover fixa" aria-label="Remover">×</button>`
           : "";
@@ -2422,6 +2679,7 @@
         </div>
         <div class="fixa-item__acoes">
           ${acao}
+          ${editar}
           ${excluir}
         </div>
       </article>`;
@@ -2434,9 +2692,95 @@
         pagarDespesaFixa(btn.dataset.id, donoId, pagId);
       });
     });
+    box.querySelectorAll(".btn-desfazer-fixa").forEach((btn) => {
+      btn.addEventListener("click", () => desfazerPagamentoFixa(btn.dataset.id, donoId));
+    });
+    box.querySelectorAll(".btn-editar-fixa").forEach((btn) => {
+      btn.addEventListener("click", () => iniciarEdicaoFixa(btn.dataset.id, donoId));
+    });
     box.querySelectorAll(".btn-excluir-fixa").forEach((btn) => {
       btn.addEventListener("click", () => excluirDespesaFixa(btn.dataset.id, donoId));
     });
+  }
+
+  function limparEdicaoFixa(donoId) {
+    editingFixaId = null;
+    const form = $("#form-pessoal-fixa");
+    form?.reset();
+    if (donoId) fillPessoalSelectsCadastro(donoId);
+    setEditModeButtons(
+      "#btn-salvar-fixa",
+      "#btn-cancelar-fixa",
+      false,
+      "Cadastrar despesa fixa",
+      "Salvar alterações"
+    );
+  }
+
+  function iniciarEdicaoFixa(fixaId, donoId) {
+    if (!podeEditarPessoalDe(donoId)) return toast("Sem permissão.");
+    const fixa = (state.pessoalDespesasFixas || []).find(
+      (f) => f.id === fixaId && f.donoId === donoId
+    );
+    if (!fixa) return;
+    editingFixaId = fixa.id;
+    fillPessoalSelectsCadastro(donoId);
+    $("#fixa-descricao").value = fixa.descricao || "";
+    $("#fixa-valor").value = Number(fixa.valor) || "";
+    $("#fixa-tipo").value = fixa.tipoId || "";
+    $("#fixa-categoria").value = fixa.categoriaId || "";
+    $("#fixa-dia").value = fixa.diaVencimento || "";
+    setEditModeButtons(
+      "#btn-salvar-fixa",
+      "#btn-cancelar-fixa",
+      true,
+      "Cadastrar despesa fixa",
+      "Salvar alterações"
+    );
+    const bloco = $("#pessoal-bloco-fixas");
+    if (bloco) bloco.open = true;
+    $("#form-pessoal-fixa")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function desfazerPagamentoFixa(fixaId, donoId) {
+    const u = usuarioAtual();
+    if (!u) return toast("Faça login.");
+    if (!podeEditarPessoalDe(donoId)) return toast("Sem permissão.");
+    const fixa = (state.pessoalDespesasFixas || []).find(
+      (f) => f.id === fixaId && f.donoId === donoId
+    );
+    if (!fixa) return;
+    const mesId = pessoalMesId || currentMonthId();
+    const lanc = (state.pessoais || []).find(
+      (p) =>
+        p &&
+        p.fixaId === fixaId &&
+        p.donoId === donoId &&
+        (p.data || "").slice(0, 7) === mesId
+    );
+    if (!lanc) return toast("Pagamento deste mês não encontrado.");
+    if (
+      !confirm(
+        `Desfazer o pagamento de "${fixa.descricao}" em ${labelMes(mesId)}?\nValor: ${formatMoney(lanc.valor)}`
+      )
+    ) {
+      return;
+    }
+    state.pessoais = state.pessoais.filter((p) => p.id !== lanc.id);
+    const outros = idsParticipantesPessoal(donoId, u.id);
+    if (outros.length) {
+      notificar({
+        paraUserIds: outros,
+        titulo: "Pagamento de fixa desfeito",
+        texto: `${u.nome} desfez o pagamento de "${fixa.descricao}" (${formatMoney(lanc.valor)}) em ${labelMes(mesId)}.`,
+        tipo: "pessoal",
+        refId: lanc.id,
+      });
+    }
+    saveState();
+    updateNotifBadge();
+    renderPessoal();
+    toast("Pagamento desfeito.");
   }
 
   function pagarDespesaFixa(fixaId, donoId, pagamentoId) {
@@ -2596,7 +2940,29 @@
       return (b.data || "").localeCompare(a.data || "");
     });
 
-    if (countEl) countEl.textContent = String(items.length);
+    const buscaEl = $("#pessoal-busca");
+    if (buscaEl && document.activeElement !== buscaEl) buscaEl.value = pessoalBusca;
+    const filtroEl = $("#pessoal-filtro-tipo");
+    if (filtroEl) filtroEl.value = pessoalFiltroTipo;
+
+    const busca = (pessoalBusca || "").trim().toLowerCase();
+    let filtrados = items;
+    if (busca) {
+      filtrados = filtrados.filter((i) =>
+        String(i.descricao || "")
+          .toLowerCase()
+          .includes(busca)
+      );
+    }
+    if (pessoalFiltroTipo === "despesas") {
+      filtrados = filtrados.filter((i) => i._kind === "despesa");
+    } else if (pessoalFiltroTipo === "receitas") {
+      filtrados = filtrados.filter((i) => i._kind === "receita");
+    } else if (pessoalFiltroTipo === "fixas") {
+      filtrados = filtrados.filter((i) => i._kind === "despesa" && i.fixaId);
+    }
+
+    if (countEl) countEl.textContent = String(filtrados.length);
 
     if (totalBox) {
       if (!items.length) {
@@ -2620,6 +2986,43 @@
       if (!items.length) {
         resumoBox.innerHTML = "";
       } else {
+        let comparativoHtml = "";
+        const prevId = mesAnteriorId(mesId);
+        if (prevId) {
+          const despPrev = (state.pessoais || []).filter(
+            (p) => p.donoId === donoId && (p.data || "").slice(0, 7) === prevId
+          );
+          const recPrev = (state.pessoalReceitas || []).filter(
+            (p) => p.donoId === donoId && (p.data || "").slice(0, 7) === prevId
+          );
+          if (despPrev.length || recPrev.length) {
+            const totalDespPrev = despPrev.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
+            const totalRecPrev = recPrev.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
+            const saldoPrev = totalRecPrev - totalDespPrev;
+            const deltaSaldo = saldo - saldoPrev;
+            const deltaDesp = totalDesp - totalDespPrev;
+            const sinalSaldo = deltaSaldo > 0.004 ? "+" : "";
+            const sinalDesp = deltaDesp > 0.004 ? "+" : "";
+            const pctDesp =
+              totalDespPrev > 0.004
+                ? ` (${sinalDesp}${((deltaDesp / totalDespPrev) * 100).toFixed(0)}%)`
+                : "";
+            const saldoClasse =
+              deltaSaldo > 0.004
+                ? "saldo--receber"
+                : deltaSaldo < -0.004
+                  ? "saldo--pagar"
+                  : "saldo--ok";
+            comparativoHtml = `
+              <div class="card-grupo card-grupo--sm" style="grid-column:1/-1">
+                <p class="card-grupo__nome">vs ${escapeHtml(labelMes(prevId))}</p>
+                <p class="card-grupo__valor ${saldoClasse}" style="font-size:0.95rem">
+                  Saldo ${sinalSaldo}${formatMoney(deltaSaldo)}
+                </p>
+                <p class="card-grupo__peso">Despesas ${sinalDesp}${formatMoney(deltaDesp)}${pctDesp}</p>
+              </div>`;
+          }
+        }
         resumoBox.innerHTML = `
           <div class="grupos-grid">
             <div class="card-grupo">
@@ -2636,6 +3039,7 @@
                 saldo > 0.004 ? "saldo--receber" : saldo < -0.004 ? "saldo--pagar" : "saldo--ok"
               }">${formatMoney(saldo)}</p>
             </div>
+            ${comparativoHtml}
           </div>`;
       }
     }
@@ -2668,25 +3072,35 @@
       }
     }
 
-    if (!items.length) {
+    if (!filtrados.length) {
       box.innerHTML = "";
-      empty.textContent = "Nenhuma despesa ou receita neste mês.";
+      empty.textContent = items.length
+        ? "Nenhum lançamento com este filtro."
+        : "Nenhuma despesa ou receita neste mês.";
       empty.classList.remove("hidden");
       return;
     }
     empty.classList.add("hidden");
 
-    box.innerHTML = items
+    box.innerHTML = filtrados
       .map((item) => {
         const isRec = item._kind === "receita";
         const tipo = isRec ? labelTipoReceita(item) : labelTipoPessoal(item);
         const pag = labelPagamentoPessoal(item);
         const cat = isRec ? "" : ` · ${labelCategoriaPessoal(item)}`;
-        const acao = podeEditar
-          ? `<button type="button" class="btn btn--icon ${
+        const acoes = [];
+        if (podeEditar) {
+          acoes.push(
+            `<button type="button" class="btn btn--edit btn--sm ${
+              isRec ? "btn-editar-receita" : "btn-editar-pessoal"
+            }" data-id="${item.id}" title="Editar" aria-label="Editar">✎</button>`
+          );
+          acoes.push(
+            `<button type="button" class="btn btn--icon ${
               isRec ? "btn-excluir-receita" : "btn-excluir-pessoal"
             }" data-id="${item.id}" title="Excluir" aria-label="Excluir">×</button>`
-          : "";
+          );
+        }
         const valorClass = isRec ? "saldo--receber" : "saldo--pagar";
         const sinal = isRec ? "+" : "−";
         const dataCurta = formatDate(item.data);
@@ -2700,10 +3114,17 @@
           <p class="pessoal-linha__meta">${escapeHtml(dataCurta)} · ${escapeHtml(detalhes)}</p>
         </div>
         <p class="pessoal-linha__valor ${valorClass}">${sinal}${formatMoney(item.valor)}</p>
-        ${acao}
+        <div class="pessoal-linha__acoes">${acoes.join("")}</div>
       </article>`;
       })
       .join("");
+
+    box.querySelectorAll(".btn-editar-pessoal").forEach((btn) => {
+      btn.addEventListener("click", () => iniciarEdicaoPessoal(btn.dataset.id));
+    });
+    box.querySelectorAll(".btn-editar-receita").forEach((btn) => {
+      btn.addEventListener("click", () => iniciarEdicaoReceita(btn.dataset.id));
+    });
 
     box.querySelectorAll(".btn-excluir-pessoal").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -2758,6 +3179,99 @@
     });
   }
 
+  function limparEdicaoPessoal() {
+    editingPessoalId = null;
+    const form = $("#form-pessoal");
+    form?.reset();
+    if ($("#pessoal-data")) $("#pessoal-data").value = todayISO();
+    const donoId = pessoalDonoId || usuarioAtual()?.id;
+    if (donoId) fillPessoalSelectsCadastro(donoId);
+    setEditModeButtons(
+      "#btn-salvar-pessoal",
+      "#btn-cancelar-pessoal",
+      false,
+      "Salvar despesa",
+      "Salvar alterações"
+    );
+  }
+
+  function limparEdicaoReceita() {
+    editingReceitaId = null;
+    const form = $("#form-pessoal-receita");
+    form?.reset();
+    if ($("#receita-data")) $("#receita-data").value = todayISO();
+    const donoId = pessoalDonoId || usuarioAtual()?.id;
+    if (donoId) fillPessoalSelectsCadastro(donoId);
+    setEditModeButtons(
+      "#btn-salvar-receita",
+      "#btn-cancelar-receita",
+      false,
+      "Salvar receita",
+      "Salvar alterações"
+    );
+  }
+
+  function iniciarEdicaoPessoal(id) {
+    const item = (state.pessoais || []).find((p) => p.id === id);
+    if (!item) return;
+    if (!podeEditarPessoalDe(item.donoId)) return toast("Sem permissão.");
+    editingReceitaId = null;
+    limparEdicaoReceita();
+    editingPessoalId = item.id;
+    pessoalDonoId = item.donoId;
+    fillPessoalListaSelect();
+    fillPessoalSelectsCadastro(item.donoId);
+    $("#pessoal-descricao").value = item.descricao || "";
+    $("#pessoal-data").value = item.data || todayISO();
+    $("#pessoal-tipo").value = item.tipoId || "";
+    $("#pessoal-categoria").value = item.categoriaId || "";
+    $("#pessoal-pagamento").value = item.pagamentoId || "";
+    $("#pessoal-valor").value = Number(item.valor) || "";
+    setEditModeButtons(
+      "#btn-salvar-pessoal",
+      "#btn-cancelar-pessoal",
+      true,
+      "Salvar despesa",
+      "Salvar alterações"
+    );
+    const bloco = $("#pessoal-bloco-despesa");
+    if (bloco) bloco.open = true;
+    $$('#tab-pessoal details[data-acordeon="lancar"]').forEach((other) => {
+      if (other !== bloco) other.open = false;
+    });
+    $("#form-pessoal")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function iniciarEdicaoReceita(id) {
+    const item = (state.pessoalReceitas || []).find((p) => p.id === id);
+    if (!item) return;
+    if (!podeEditarPessoalDe(item.donoId)) return toast("Sem permissão.");
+    editingPessoalId = null;
+    limparEdicaoPessoal();
+    editingReceitaId = item.id;
+    pessoalDonoId = item.donoId;
+    fillPessoalListaSelect();
+    fillPessoalSelectsCadastro(item.donoId);
+    $("#receita-descricao").value = item.descricao || "";
+    $("#receita-data").value = item.data || todayISO();
+    $("#receita-tipo").value = item.tipoId || "";
+    $("#receita-pagamento").value = item.pagamentoId || "";
+    $("#receita-valor").value = Number(item.valor) || "";
+    setEditModeButtons(
+      "#btn-salvar-receita",
+      "#btn-cancelar-receita",
+      true,
+      "Salvar receita",
+      "Salvar alterações"
+    );
+    const bloco = $("#pessoal-bloco-receita");
+    if (bloco) bloco.open = true;
+    $$('#tab-pessoal details[data-acordeon="lancar"]').forEach((other) => {
+      if (other !== bloco) other.open = false;
+    });
+    $("#form-pessoal-receita")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   function initPessoal() {
     const dataEl = $("#pessoal-data");
     if (dataEl) dataEl.value = todayISO();
@@ -2776,12 +3290,40 @@
 
     $("#pessoal-lista")?.addEventListener("change", (e) => {
       pessoalDonoId = e.target.value || usuarioAtualId;
+      limparEdicaoPessoal();
+      limparEdicaoReceita();
+      limparEdicaoFixa(pessoalDonoId);
       renderPessoal();
     });
 
     $("#pessoal-mes")?.addEventListener("change", (e) => {
       pessoalMesId = e.target.value || currentMonthId();
       renderPessoal();
+    });
+
+    $("#pessoal-busca")?.addEventListener("input", (e) => {
+      pessoalBusca = e.target.value || "";
+      renderPessoal();
+    });
+
+    $("#pessoal-filtro-tipo")?.addEventListener("change", (e) => {
+      pessoalFiltroTipo = e.target.value || "todos";
+      renderPessoal();
+    });
+
+    $("#btn-cancelar-pessoal")?.addEventListener("click", () => {
+      limparEdicaoPessoal();
+      toast("Edição cancelada.");
+    });
+
+    $("#btn-cancelar-receita")?.addEventListener("click", () => {
+      limparEdicaoReceita();
+      toast("Edição cancelada.");
+    });
+
+    $("#btn-cancelar-fixa")?.addEventListener("click", () => {
+      limparEdicaoFixa(pessoalDonoId || usuarioAtual()?.id);
+      toast("Edição cancelada.");
     });
 
     $("#btn-add-pessoal-tipo")?.addEventListener("click", () =>
@@ -2840,10 +3382,7 @@
         return toast("Selecione tipo, categoria e forma de pagamento.");
       }
 
-      const item = {
-        id: uid(),
-        donoId: dono.id,
-        donoNome: dono.nome,
+      const campos = {
         descricao,
         data,
         tipoId: tipo.id,
@@ -2855,6 +3394,40 @@
         pagamentoNome: pagamento.nome,
         pagamento: pagamento.nome,
         valor,
+      };
+
+      if (editingPessoalId) {
+        const existente = (state.pessoais || []).find((p) => p.id === editingPessoalId);
+        if (!existente || !podeEditarPessoalDe(existente.donoId)) {
+          limparEdicaoPessoal();
+          return toast("Despesa não encontrada ou sem permissão.");
+        }
+        Object.assign(existente, campos);
+        const outros = idsParticipantesPessoal(existente.donoId, u.id);
+        if (outros.length) {
+          notificar({
+            paraUserIds: outros,
+            titulo: "Despesa pessoal editada",
+            texto: `${u.nome} editou "${descricao}" (${categoria.nome}) para ${formatMoney(valor)}.`,
+            tipo: "pessoal",
+            refId: existente.id,
+          });
+        }
+        saveState();
+        updateNotifBadge();
+        limparEdicaoPessoal();
+        pessoalDonoId = existente.donoId;
+        pessoalMesId = data.slice(0, 7);
+        renderPessoal();
+        toast("Despesa atualizada.");
+        return;
+      }
+
+      const item = {
+        id: uid(),
+        donoId: dono.id,
+        donoNome: dono.nome,
+        ...campos,
         criadoPorId: u.id,
         criadoPorNome: u.nome,
         criadoEm: new Date().toISOString(),
@@ -2911,10 +3484,7 @@
         return toast("Selecione tipo de receita e forma de recebimento.");
       }
 
-      const item = {
-        id: uid(),
-        donoId: dono.id,
-        donoNome: dono.nome,
+      const campos = {
         descricao,
         data,
         tipoId: tipo.id,
@@ -2923,6 +3493,40 @@
         pagamentoNome: pagamento.nome,
         pagamento: pagamento.nome,
         valor,
+      };
+
+      if (editingReceitaId) {
+        const existente = (state.pessoalReceitas || []).find((p) => p.id === editingReceitaId);
+        if (!existente || !podeEditarPessoalDe(existente.donoId)) {
+          limparEdicaoReceita();
+          return toast("Receita não encontrada ou sem permissão.");
+        }
+        Object.assign(existente, campos);
+        const outros = idsParticipantesPessoal(existente.donoId, u.id);
+        if (outros.length) {
+          notificar({
+            paraUserIds: outros,
+            titulo: "Receita editada",
+            texto: `${u.nome} editou a receita "${descricao}" (${tipo.nome}) para ${formatMoney(valor)}.`,
+            tipo: "pessoal",
+            refId: existente.id,
+          });
+        }
+        saveState();
+        updateNotifBadge();
+        limparEdicaoReceita();
+        pessoalDonoId = existente.donoId;
+        pessoalMesId = data.slice(0, 7);
+        renderPessoal();
+        toast("Receita atualizada.");
+        return;
+      }
+
+      const item = {
+        id: uid(),
+        donoId: dono.id,
+        donoNome: dono.nome,
+        ...campos,
         criadoPorId: u.id,
         criadoPorNome: u.nome,
         criadoEm: new Date().toISOString(),
@@ -2981,6 +3585,28 @@
         (!Number.isFinite(diaVencimento) || diaVencimento < 1 || diaVencimento > 31)
       ) {
         return toast("Dia do vencimento deve ser entre 1 e 31.");
+      }
+
+      if (editingFixaId) {
+        const existente = (state.pessoalDespesasFixas || []).find(
+          (f) => f.id === editingFixaId && f.donoId === donoId
+        );
+        if (!existente) {
+          limparEdicaoFixa(donoId);
+          return toast("Despesa fixa não encontrada.");
+        }
+        existente.descricao = descricao;
+        existente.valor = valor;
+        existente.tipoId = tipo.id;
+        existente.tipoNome = tipo.nome;
+        existente.categoriaId = categoria.id;
+        existente.categoriaNome = categoria.nome;
+        existente.diaVencimento = diaVencimento || null;
+        saveState();
+        limparEdicaoFixa(donoId);
+        renderPessoal();
+        toast("Despesa fixa atualizada.");
+        return;
       }
 
       const item = {
@@ -3496,9 +4122,25 @@
     return transfers;
   }
 
-  function htmlBlocoAcerto({ titulo, meta, saldos, transfers, vazio, mostrarCabecalho = true }) {
+  function htmlBlocoAcerto({
+    titulo,
+    meta,
+    saldos,
+    transfers,
+    vazio,
+    mostrarCabecalho = true,
+    mesId = null,
+    escopo = null,
+  }) {
     const saldosAtivos = filtrarSaldosAtivos(saldos);
     const transfersAtivas = (transfers || []).filter((t) => Number(t.valor) > 0.005);
+    const comQuitacao = Boolean(mesId && escopo);
+    const pendentes = [];
+    const quitadas = [];
+    transfersAtivas.forEach((t) => {
+      if (comQuitacao && quitacaoExiste(mesId, escopo, t)) quitadas.push(t);
+      else pendentes.push(t);
+    });
 
     if (vazio || (!saldosAtivos.length && !transfersAtivas.length)) {
       return `
@@ -3533,27 +4175,139 @@
       </div>`
       : "";
 
-    const transfersHtml = transfersAtivas.length
-      ? `
-      <div class="acerto-lista">
-        <p class="acerto-lista__titulo">Quem passa pra quem</p>
-        ${transfersAtivas
-          .map(
-            (t) => `
-          <div class="acerto-item">
+    const renderTransfer = (t, quitada) => {
+      const acao = !comQuitacao
+        ? ""
+        : quitada
+          ? `<button type="button" class="btn btn--ghost btn--sm btn-desfazer-quitacao no-print"
+               data-mes="${escapeHtml(mesId)}" data-escopo="${escapeHtml(escopo)}"
+               data-de="${escapeHtml(t.deId)}" data-para="${escapeHtml(t.paraId)}"
+               data-valor="${Number(t.valor)}" data-denome="${escapeHtml(t.deNome)}"
+               data-paranome="${escapeHtml(t.paraNome)}">Desfazer</button>
+             <span class="badge badge--aberto">Quitado</span>`
+          : `<button type="button" class="btn btn--primary btn--sm btn-marcar-quitacao no-print"
+               data-mes="${escapeHtml(mesId)}" data-escopo="${escapeHtml(escopo)}"
+               data-de="${escapeHtml(t.deId)}" data-para="${escapeHtml(t.paraId)}"
+               data-valor="${Number(t.valor)}" data-denome="${escapeHtml(t.deNome)}"
+               data-paranome="${escapeHtml(t.paraNome)}">Marcar pago</button>`;
+      return `
+          <div class="acerto-item ${quitada ? "acerto-item--quitado" : ""}">
             <p class="acerto-item__fluxo">
               <strong>${escapeHtml(t.deNome)}</strong>
               <span class="acerto-item__seta" aria-hidden="true">→</span>
               <strong>${escapeHtml(t.paraNome)}</strong>
             </p>
             <p class="acerto-item__valor">${formatMoney(t.valor)}</p>
-          </div>`
-          )
-          .join("")}
-      </div>`
-      : `<p class="fieldset__hint" style="margin:0.75rem 0 0">Todos quitados — nenhuma transferência.</p>`;
+            <div class="acerto-item__acoes">${acao}</div>
+          </div>`;
+    };
+
+    let transfersHtml = "";
+    if (pendentes.length) {
+      transfersHtml += `
+      <div class="acerto-lista">
+        <p class="acerto-lista__titulo">Quem passa pra quem</p>
+        ${pendentes.map((t) => renderTransfer(t, false)).join("")}
+      </div>`;
+    } else if (transfersAtivas.length && quitadas.length) {
+      transfersHtml += `<p class="fieldset__hint" style="margin:0.75rem 0 0">Todas as transferências deste bloco já foram quitadas.</p>`;
+    } else if (!transfersAtivas.length) {
+      transfersHtml += `<p class="fieldset__hint" style="margin:0.75rem 0 0">Todos quitados — nenhuma transferência.</p>`;
+    }
+
+    if (quitadas.length) {
+      transfersHtml += `
+      <div class="acerto-lista acerto-lista--quitadas">
+        <p class="acerto-lista__titulo">Já quitadas</p>
+        ${quitadas.map((t) => renderTransfer(t, true)).join("")}
+      </div>`;
+    }
 
     return `${cabecalho}${saldosHtml}${transfersHtml}`;
+  }
+
+  function marcarTransferenciaPaga(mesId, escopo, t) {
+    const u = usuarioAtual();
+    if (!u) return toast("Faça login.");
+    if (!mesId || !escopo || !t) return;
+    if (quitacaoExiste(mesId, escopo, t)) return toast("Já está quitada.");
+    if (!Array.isArray(state.encontrosQuitacoes)) state.encontrosQuitacoes = [];
+    state.encontrosQuitacoes.push({
+      id: uid(),
+      mesId,
+      escopo,
+      deId: t.deId,
+      deNome: t.deNome,
+      paraId: t.paraId,
+      paraNome: t.paraNome,
+      valor: Number(t.valor),
+      pagoEm: new Date().toISOString(),
+      pagoPorId: u.id,
+      pagoPorNome: u.nome,
+    });
+
+    if (escopo === "pessoas") {
+      const match = (state.pendencias || []).find(
+        (p) =>
+          p &&
+          p.status === "pendente" &&
+          (p.data || "").slice(0, 7) === mesId &&
+          p.devedorId === t.deId &&
+          p.credorId === t.paraId &&
+          Math.abs(Number(p.valor) - Number(t.valor)) < 0.02
+      );
+      if (match) {
+        match.status = "pago";
+        match.pagoEm = new Date().toISOString();
+        match.pagoPorId = u.id;
+        match.pagoPorNome = u.nome;
+      }
+    }
+
+    saveState();
+    updateNotifBadge();
+    renderEncontro();
+    renderPendencias();
+    renderRelatorio();
+    toast("Transferência marcada como paga.");
+  }
+
+  function desfazerTransferenciaPaga(mesId, escopo, t) {
+    if (!usuarioAtual()) return toast("Faça login.");
+    if (!mesId || !escopo || !t) return;
+    const fp = fingerprintTransferencia(mesId, escopo, t.deId, t.paraId, t.valor);
+    state.encontrosQuitacoes = (state.encontrosQuitacoes || []).filter(
+      (q) =>
+        fingerprintTransferencia(q.mesId, q.escopo, q.deId, q.paraId, q.valor) !== fp
+    );
+    saveState();
+    renderEncontro();
+    toast("Quitação desfeita.");
+  }
+
+  function bindQuitacaoButtons(root) {
+    root?.querySelectorAll(".btn-marcar-quitacao").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        marcarTransferenciaPaga(btn.dataset.mes, btn.dataset.escopo, {
+          deId: btn.dataset.de,
+          deNome: btn.dataset.denome,
+          paraId: btn.dataset.para,
+          paraNome: btn.dataset.paranome,
+          valor: Number(btn.dataset.valor),
+        });
+      });
+    });
+    root?.querySelectorAll(".btn-desfazer-quitacao").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        desfazerTransferenciaPaga(btn.dataset.mes, btn.dataset.escopo, {
+          deId: btn.dataset.de,
+          deNome: btn.dataset.denome,
+          paraId: btn.dataset.para,
+          paraNome: btn.dataset.paranome,
+          valor: Number(btn.dataset.valor),
+        });
+      });
+    });
   }
 
   function fillSelectTiposDespesa(selected = "") {
@@ -3992,6 +4746,160 @@
     ["#enc-casa", "#enc-vaquinha", "#enc-pendencias", "#encontro-mes"].forEach((sel) => {
       $(sel)?.addEventListener("change", () => renderEncontro());
     });
+
+    $("#btn-copiar-encontro")?.addEventListener("click", async () => {
+      const texto = textoEncontroParaCopiar();
+      if (!texto) return toast("Nada para copiar.");
+      const ok = await copiarTexto(texto);
+      toast(ok ? "Texto copiado para WhatsApp." : "Não foi possível copiar.");
+    });
+
+    $("#btn-imprimir-encontro")?.addEventListener("click", () => {
+      document.body.classList.add("print-mode", "print-encontro");
+      window.print();
+    });
+
+    $("#btn-copiar-relatorio")?.addEventListener("click", async () => {
+      const texto = textoRelatorioParaCopiar();
+      if (!texto) return toast("Nada para copiar.");
+      const ok = await copiarTexto(texto);
+      toast(ok ? "Texto copiado para WhatsApp." : "Não foi possível copiar.");
+    });
+
+    $("#btn-imprimir-relatorio")?.addEventListener("click", () => {
+      document.body.classList.add("print-mode", "print-relatorio");
+      window.print();
+    });
+
+    window.addEventListener("afterprint", () => {
+      document.body.classList.remove("print-mode", "print-encontro", "print-relatorio");
+    });
+  }
+
+  function textoLinhasTransferencias(transfers, mesId, escopo) {
+    const ativas = (transfers || []).filter((t) => Number(t.valor) > 0.005);
+    if (!ativas.length) return ["(nenhuma transferência)"];
+    return ativas.map((t) => {
+      const quit = mesId && escopo && quitacaoExiste(mesId, escopo, t) ? " ✅" : "";
+      return `• ${t.deNome} → ${t.paraNome}: ${formatMoney(t.valor)}${quit}`;
+    });
+  }
+
+  function textoEncontroParaCopiar() {
+    const mesId = $("#encontro-mes")?.value || mesSelecionado;
+    if (!mesId) return "";
+    const useCasa = $("#enc-casa")?.checked;
+    const useVaq = $("#enc-vaquinha")?.checked;
+    const usePend = $("#enc-pendencias")?.checked;
+    if (!useCasa && !useVaq && !usePend) return "";
+
+    const linhas = [`*Encontro — ${labelMes(mesId)}*`, ""];
+    const origens = [
+      useCasa ? "Mercado+Despesas" : null,
+      useVaq ? "Vaquinha" : null,
+      usePend ? "Entre nós" : null,
+    ].filter(Boolean);
+    linhas.push(origens.join(" · "), "");
+
+    if (useCasa) {
+      const casa = state.lancamentos.filter(
+        (l) => l.mesId === mesId && (l.tipo === "mercado" || l.tipo === "despesa")
+      );
+      const saldos = calcularSaldosGrupos(casa);
+      const transfers = calcularTransferencias(saldos);
+      linhas.push("*1) Grupos da casa*", ...textoLinhasTransferencias(transfers, mesId, "grupos"), "");
+    }
+
+    if (useVaq || usePend) {
+      const listas = [];
+      if (useVaq) listas.push(calcularSaldosPessoasVaquinha(mesId));
+      if (usePend) listas.push(calcularSaldosPendenciasMes(mesId));
+      const saldosP = mergeSaldosPessoas(listas);
+      const transfersP = calcularTransferencias(saldosP);
+      const fontes = [useVaq ? "vaquinha" : null, usePend ? "entre nós" : null]
+        .filter(Boolean)
+        .join(" + ");
+      linhas.push(
+        `*2) Pessoas (${fontes})*`,
+        ...textoLinhasTransferencias(transfersP, mesId, "pessoas"),
+        ""
+      );
+    }
+
+    return linhas.join("\n").trim();
+  }
+
+  function textoRelatorioParaCopiar() {
+    const mesId = mesSelecionado;
+    if (!mesId) return "";
+    const titulo = labelMes(mesId);
+
+    if (relatorioModo === "vaquinha") {
+      const vaquinhas = state.lancamentos.filter(
+        (l) => l.tipo === "vaquinha" && l.mesId === mesId
+      );
+      const saldos = calcularSaldosPessoasVaquinha(mesId);
+      const transfers = calcularTransferencias(saldos);
+      const total = vaquinhas.reduce((acc, v) => acc + (Number(v.valor) || 0), 0);
+      const linhas = [
+        `*Vaquinhas — ${titulo}*`,
+        `Total: ${formatMoney(total)} · ${vaquinhas.length} vaquinha(s)`,
+        "",
+        "*Acerto*",
+        ...textoLinhasTransferencias(transfers),
+        "",
+      ];
+      vaquinhas.forEach((v) => {
+        linhas.push(`• ${formatDate(v.data)} — ${v.descricao}: ${formatMoney(v.valor)}`);
+      });
+      return linhas.join("\n").trim();
+    }
+
+    if (relatorioModo === "pendencias") {
+      const items = state.pendencias.filter((p) => (p.data || "").slice(0, 7) === mesId);
+      const abertas = items.filter((p) => p.status === "pendente");
+      const saldos = calcularSaldosPendenciasMes(mesId);
+      const transfers = calcularTransferencias(saldos);
+      const total = abertas.reduce((acc, p) => acc + (Number(p.valor) || 0), 0);
+      const linhas = [
+        `*Entre nós — ${titulo}*`,
+        `Abertas: ${formatMoney(total)} · ${abertas.length} de ${items.length}`,
+        "",
+        "*Acerto*",
+        ...textoLinhasTransferencias(transfers),
+        "",
+      ];
+      items.forEach((p) => {
+        const st = p.status === "pago" ? "pago" : "pendente";
+        linhas.push(
+          `• ${formatDate(p.data)} — ${p.descricao}: ${formatMoney(p.valor)} (${st})`
+        );
+      });
+      return linhas.join("\n").trim();
+    }
+
+    const items = state.lancamentos.filter(
+      (l) => l.mesId === mesId && (l.tipo === "mercado" || l.tipo === "despesa")
+    );
+    const total = items.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
+    const saldos = calcularSaldosGrupos(items);
+    const transfers = calcularTransferencias(saldos);
+    const linhas = [
+      `*Mercado + Despesas — ${titulo}*`,
+      `Total: ${formatMoney(total)} · ${items.length} lançamento(s)`,
+      "",
+      "*Acerto*",
+      ...textoLinhasTransferencias(transfers),
+      "",
+    ];
+    items
+      .slice()
+      .sort((a, b) => (b.data || "").localeCompare(a.data || ""))
+      .forEach((item) => {
+        const tipo = item.tipo === "mercado" ? "Mercado" : item.descricao || "Despesa";
+        linhas.push(`• ${formatDate(item.data)} — ${tipo}: ${formatMoney(item.valor)}`);
+      });
+    return linhas.join("\n").trim();
   }
 
   function renderEncontro() {
@@ -4038,6 +4946,8 @@
           saldos,
           transfers,
           vazio: !casa.length,
+          mesId,
+          escopo: "grupos",
         })
       );
     }
@@ -4058,11 +4968,14 @@
           saldos: saldosP,
           transfers: transfersP,
           vazio: !saldosP.length,
+          mesId,
+          escopo: "pessoas",
         })
       );
     }
 
     box.innerHTML = partes.join("");
+    bindQuitacaoButtons(box);
   }
 
   /* ---------- Relatório ---------- */
@@ -4189,7 +5102,10 @@
         detalhe += `<br><span class="detalhe">Por ${escapeHtml(item.lancadoPorNome || "—")}</span>`;
 
         const acao = podeExcluir
-          ? `<button type="button" class="btn btn--icon btn-excluir" data-id="${item.id}" title="Excluir">×</button>`
+          ? `<div class="acerto-item__acoes no-print">
+              <button type="button" class="btn btn--edit btn--sm btn-editar-rel" data-id="${item.id}" data-tipo="${item.tipo}" title="Editar">✎</button>
+              <button type="button" class="btn btn--icon btn-excluir" data-id="${item.id}" title="Excluir">×</button>
+            </div>`
           : `<span class="detalhe">—</span>`;
 
         return `
@@ -4202,6 +5118,19 @@
           </tr>`;
       })
       .join("");
+
+    tbody.querySelectorAll(".btn-editar-rel").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const tipo = btn.dataset.tipo;
+        if (tipo === "mercado") {
+          $$(".nav__btn").find((b) => b.dataset.tab === "mercado")?.click();
+          iniciarEdicaoMercado(btn.dataset.id);
+        } else if (tipo === "despesa") {
+          $$(".nav__btn").find((b) => b.dataset.tab === "despesas")?.click();
+          iniciarEdicaoDespesa(btn.dataset.id);
+        }
+      });
+    });
 
     tbody.querySelectorAll(".btn-excluir").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -4261,11 +5190,18 @@
       return;
     }
     empty.classList.add("hidden");
+    const podeEditarMes = mesEstaAberto(mesSelecionado);
     lista.innerHTML = vaquinhas
       .map((v) => {
         const parts = (v.participantes || [])
           .map((p) => `${escapeHtml(p.nome)}: ${textoSaldo(p.saldo ?? 0).texto}`)
           .join(" · ");
+        const meu = v.lancadoPorId === usuarioAtualId;
+        const podeMexer = podeEditarMes && (meu || isAdmin());
+        const acoes = podeMexer
+          ? `<button type="button" class="btn btn--edit btn--sm btn-editar-vaquinha" data-id="${v.id}" title="Editar">✎</button>
+             <button type="button" class="btn btn--ghost btn--sm btn-excluir-vaquinha" data-id="${v.id}">Excluir</button>`
+          : "";
         return `
       <article class="mercado-item">
         <div>
@@ -4274,9 +5210,74 @@
           <p class="mercado-item__por" style="margin-top:0.25rem">${parts || "—"}</p>
         </div>
         <p class="mercado-item__valor">${formatMoney(v.valor)}</p>
+        <div class="mercado-item__rodape">
+          <p class="mercado-item__por">Por ${escapeHtml(v.lancadoPorNome || "—")}</p>
+          <div class="mercado-item__acoes">${acoes}</div>
+        </div>
       </article>`;
       })
       .join("");
+
+    lista.querySelectorAll(".btn-editar-vaquinha").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const item = state.lancamentos.find((l) => l.id === btn.dataset.id && l.tipo === "vaquinha");
+        if (!item) return;
+        if (!mesEstaAberto(item.mesId)) return toast("Só é possível editar no mês aberto.");
+        if (item.lancadoPorId !== usuarioAtualId && !isAdmin()) {
+          return toast("Só quem lançou (ou o admin) pode editar.");
+        }
+        const novaDesc = prompt("Descrição da vaquinha:", item.descricao || "");
+        if (novaDesc == null) return;
+        const desc = novaDesc.trim();
+        if (!desc) return toast("Descrição inválida.");
+        const novaData = prompt("Data (AAAA-MM-DD):", item.data || todayISO());
+        if (novaData == null) return;
+        const data = novaData.trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return toast("Data inválida.");
+        if (data.slice(0, 7) !== item.mesId) {
+          return toast(`A data deve pertencer a ${labelMes(item.mesId)}.`);
+        }
+        item.descricao = desc;
+        item.data = data;
+        const autor = autorMeta();
+        notificarTodosExceto(autor.lancadoPorId, {
+          titulo: "Vaquinha editada",
+          texto: `${autor.lancadoPorNome} editou a vaquinha "${desc}".`,
+          tipo: "vaquinha",
+          refId: item.id,
+        });
+        saveState();
+        updateNotifBadge();
+        renderRelatorio();
+        renderEncontro();
+        toast("Vaquinha atualizada.");
+      });
+    });
+
+    lista.querySelectorAll(".btn-excluir-vaquinha").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const item = state.lancamentos.find((l) => l.id === btn.dataset.id && l.tipo === "vaquinha");
+        if (!item) return;
+        if (!mesEstaAberto(item.mesId)) return toast("Só é possível excluir no mês aberto.");
+        if (item.lancadoPorId !== usuarioAtualId && !isAdmin()) {
+          return toast("Só quem lançou (ou o admin) pode excluir.");
+        }
+        if (!confirm(`Excluir vaquinha "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
+        const autor = autorMeta();
+        state.lancamentos = state.lancamentos.filter((l) => l.id !== item.id);
+        notificarTodosExceto(autor.lancadoPorId, {
+          titulo: "Vaquinha excluída",
+          texto: `${autor.lancadoPorNome} excluiu a vaquinha "${item.descricao}" (${formatMoney(item.valor)}).`,
+          tipo: "exclusao",
+          refId: item.id,
+        });
+        saveState();
+        updateNotifBadge();
+        renderRelatorio();
+        renderEncontro();
+        toast("Vaquinha excluída.");
+      });
+    });
   }
 
   function renderRelatorioPendencias() {

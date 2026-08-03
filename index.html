@@ -113,7 +113,8 @@
             <span class="field__label">Valor total (R$)</span>
             <input type="number" id="mercado-valor" name="valor" min="0.01" step="0.01" placeholder="0,00" required />
           </label>
-          <button type="submit" class="btn btn--primary btn--block">Salvar mercado</button>
+          <button type="submit" class="btn btn--primary btn--block" id="btn-salvar-mercado">Salvar mercado</button>
+          <button type="button" class="btn btn--ghost btn--block hidden" id="btn-cancelar-mercado">Cancelar edição</button>
         </form>
 
         <div id="mercado-total" class="mercado-total hidden" aria-live="polite"></div>
@@ -169,7 +170,8 @@
             <span class="field__label">Valor total (R$)</span>
             <input type="number" id="despesa-valor" name="valor" min="0.01" step="0.01" placeholder="0,00" required />
           </label>
-          <button type="submit" class="btn btn--primary btn--block">Salvar despesa</button>
+          <button type="submit" class="btn btn--primary btn--block" id="btn-salvar-despesa">Salvar despesa</button>
+          <button type="button" class="btn btn--ghost btn--block hidden" id="btn-cancelar-despesa">Cancelar edição</button>
         </form>
 
         <div id="despesa-total" class="mercado-total hidden" aria-live="polite"></div>
@@ -321,7 +323,8 @@
               <span class="field__label">Valor (R$)</span>
               <input type="number" id="pessoal-valor" min="0.01" step="0.01" placeholder="0,00" required />
             </label>
-            <button type="submit" class="btn btn--primary btn--block">Salvar despesa</button>
+            <button type="submit" class="btn btn--primary btn--block" id="btn-salvar-pessoal">Salvar despesa</button>
+            <button type="button" class="btn btn--ghost btn--block hidden" id="btn-cancelar-pessoal">Cancelar edição</button>
           </form>
         </details>
 
@@ -353,7 +356,8 @@
               <span class="field__label">Valor (R$)</span>
               <input type="number" id="receita-valor" min="0.01" step="0.01" placeholder="0,00" required />
             </label>
-            <button type="submit" class="btn btn--secondary btn--block">Salvar receita</button>
+            <button type="submit" class="btn btn--secondary btn--block" id="btn-salvar-receita">Salvar receita</button>
+            <button type="button" class="btn btn--ghost btn--block hidden" id="btn-cancelar-receita">Cancelar edição</button>
           </form>
         </details>
 
@@ -390,7 +394,8 @@
               <span class="field__label">Dia do vencimento</span>
               <input type="number" id="fixa-dia" min="1" max="31" step="1" placeholder="Ex: 10" />
             </label>
-            <button type="submit" class="btn btn--primary btn--block">Cadastrar despesa fixa</button>
+            <button type="submit" class="btn btn--primary btn--block" id="btn-salvar-fixa">Cadastrar despesa fixa</button>
+            <button type="button" class="btn btn--ghost btn--block hidden" id="btn-cancelar-fixa">Cancelar edição</button>
           </form>
           <div id="lista-pessoal-fixas" class="lista-fixas" style="margin-top:0.85rem"></div>
           <p id="empty-pessoal-fixas" class="empty empty--sm">Nenhuma despesa fixa cadastrada.</p>
@@ -459,6 +464,21 @@
             <span id="pessoal-count" class="section-head__meta" style="margin-left:0.35rem">0</span>
           </summary>
           <div id="pessoal-por-categoria" class="resumo" style="margin-top:0.75rem"></div>
+          <div class="pessoal-filtros" style="margin-top:0.75rem">
+            <label class="field field--grow">
+              <span class="field__label">Buscar</span>
+              <input type="search" id="pessoal-busca" placeholder="Descrição…" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span class="field__label">Tipo</span>
+              <select id="pessoal-filtro-tipo">
+                <option value="todos">Todos</option>
+                <option value="despesas">Despesas</option>
+                <option value="receitas">Receitas</option>
+                <option value="fixas">Só fixas</option>
+              </select>
+            </label>
+          </div>
           <div id="lista-pessoal" class="lista-mercado" style="margin-top:0.75rem"></div>
           <p id="empty-pessoal" class="empty empty--sm">Nenhuma despesa ou receita neste mês.</p>
         </details>
@@ -484,6 +504,10 @@
       <section id="tab-relatorio" class="panel" role="tabpanel" hidden>
         <h2 class="panel__title">Relatórios</h2>
         <p class="panel__hint">Consulte cada tipo separado. Para juntar tudo, use a aba Encontro.</p>
+        <div class="export-acoes no-print">
+          <button type="button" id="btn-copiar-relatorio" class="btn btn--secondary btn--sm">Copiar para WhatsApp</button>
+          <button type="button" id="btn-imprimir-relatorio" class="btn btn--ghost btn--sm">Imprimir</button>
+        </div>
 
         <div class="mes-painel form">
           <div class="mes-painel__head">
@@ -559,6 +583,10 @@
       <section id="tab-encontro" class="panel" role="tabpanel" hidden>
         <h2 class="panel__title">Encontro de contas</h2>
         <p class="panel__hint">Escolha o que entrar no acerto e veja as transferências para fechar tudo de uma vez.</p>
+        <div class="export-acoes no-print">
+          <button type="button" id="btn-copiar-encontro" class="btn btn--secondary btn--sm">Copiar para WhatsApp</button>
+          <button type="button" id="btn-imprimir-encontro" class="btn btn--ghost btn--sm">Imprimir</button>
+        </div>
 
         <div class="form">
           <label class="field">
