@@ -1034,8 +1034,8 @@
 
       const requestInfo = await build({
         applicationServerKeys: {
-          publicKey: vapid.publicKey,
-          privateKey: vapid.privateKey,
+          publicKey: urlBase64ToUint8Array(vapid.publicKey),
+          privateKey: urlBase64ToUint8Array(vapid.privateKey),
         },
         payload,
         target: subscription,
@@ -1044,7 +1044,7 @@
         urgency: "high",
       });
 
-      await fetch(requestInfo.url || requestInfo.endpoint, {
+      await fetch(requestInfo.endpoint || requestInfo.url, {
         method: requestInfo.method || "POST",
         headers: requestInfo.headers,
         body: requestInfo.body,
