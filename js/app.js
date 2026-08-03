@@ -72,6 +72,7 @@
   let pessoalMesId = todayISO().slice(0, 7);
   let pessoalBusca = "";
   let pessoalFiltroTipo = "todos"; // todos | despesas | receitas | fixas
+  let pessoalFiltroCategoria = ""; // nome da categoria ou ""
   let editingMercadoId = null;
   let editingDespesaId = null;
   let editingPessoalId = null;
@@ -2961,6 +2962,13 @@
     } else if (pessoalFiltroTipo === "fixas") {
       filtrados = filtrados.filter((i) => i._kind === "despesa" && i.fixaId);
     }
+    if (pessoalFiltroCategoria) {
+      filtrados = filtrados.filter(
+        (i) =>
+          i._kind === "despesa" &&
+          (labelCategoriaPessoal(i) || "Sem categoria") === pessoalFiltroCategoria
+      );
+    }
 
     if (countEl) countEl.textContent = String(filtrados.length);
 
@@ -3054,21 +3062,50 @@
           mapa[nome] = (mapa[nome] || 0) + (Number(item.valor) || 0);
         });
         const linhas = Object.entries(mapa).sort((a, b) => b[1] - a[1]);
+        const filtroAtivo = pessoalFiltroCategoria
+          ? `<button type="button" class="btn btn--ghost btn--sm btn-limpar-cat-pessoal" style="margin-top:0.45rem">
+               Mostrando: ${escapeHtml(pessoalFiltroCategoria)} · limpar
+             </button>`
+          : `<p class="fieldset__hint" style="margin:0.4rem 0 0">Toque numa categoria para filtrar os lançamentos.</p>`;
         porCatBox.innerHTML = `
           <div class="card-resumo card-resumo--compacto">
             <p class="card-resumo__label">Despesas por categoria</p>
             <div class="grupos-grid grupos-grid--2" style="margin-top:0.55rem">
               ${linhas
-                .map(
-                  ([nome, valor]) => `
-                <div class="card-grupo card-grupo--sm">
+                .map(([nome, valor]) => {
+                  const ativo = pessoalFiltroCategoria === nome ? " card-grupo--ativo" : "";
+                  return `
+                <button type="button" class="card-grupo card-grupo--sm card-grupo--btn${ativo}" data-categoria="${escapeHtml(nome)}">
                   <p class="card-grupo__nome">${escapeHtml(nome)}</p>
                   <p class="card-grupo__valor">${formatMoney(valor)}</p>
-                </div>`
-                )
+                </button>`;
+                })
                 .join("")}
             </div>
+            ${filtroAtivo}
           </div>`;
+
+        porCatBox.querySelectorAll(".card-grupo--btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const cat = btn.dataset.categoria || "";
+            if (pessoalFiltroCategoria === cat) {
+              pessoalFiltroCategoria = "";
+            } else {
+              pessoalFiltroCategoria = cat;
+              if (pessoalFiltroTipo === "receitas") {
+                pessoalFiltroTipo = "despesas";
+                const sel = $("#pessoal-filtro-tipo");
+                if (sel) sel.value = "despesas";
+              }
+            }
+            renderPessoal();
+            $("#lista-pessoal")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          });
+        });
+        porCatBox.querySelector(".btn-limpar-cat-pessoal")?.addEventListener("click", () => {
+          pessoalFiltroCategoria = "";
+          renderPessoal();
+        });
       }
     }
 
@@ -3298,6 +3335,7 @@
 
     $("#pessoal-mes")?.addEventListener("change", (e) => {
       pessoalMesId = e.target.value || currentMonthId();
+      pessoalFiltroCategoria = "";
       renderPessoal();
     });
 
@@ -3308,6 +3346,7 @@
 
     $("#pessoal-filtro-tipo")?.addEventListener("change", (e) => {
       pessoalFiltroTipo = e.target.value || "todos";
+      if (pessoalFiltroTipo === "receitas") pessoalFiltroCategoria = "";
       renderPessoal();
     });
 

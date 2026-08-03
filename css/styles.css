@@ -805,6 +805,29 @@ select {
   margin-top: 0.1rem;
 }
 
+.card-grupo--btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.card-grupo--btn:hover {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--line));
+  background: color-mix(in srgb, var(--brand-soft) 35%, #fff);
+}
+
+.card-grupo--ativo {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand-soft) 55%, #fff);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 35%, transparent);
+}
+
 .card-resumo--compacto {
   padding: 0.75rem 0.85rem;
 }
