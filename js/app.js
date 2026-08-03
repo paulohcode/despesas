@@ -298,6 +298,7 @@
       renderRelatorio();
       renderVaquinhaUI();
       renderMercadoLista();
+      renderDespesaLista();
       renderPendencias();
       fillPendenciaPessoas();
       renderLoginUI();
@@ -617,6 +618,7 @@
     renderRelatorio();
     renderVaquinhaUI();
     renderMercadoLista();
+    renderDespesaLista();
     renderPendencias();
     fillPendenciaPessoas();
     fillConfigForm();
@@ -681,7 +683,10 @@
         if (tab === "config") fillConfigForm();
         if (tab === "vaquinha") renderVaquinhaUI();
         if (tab === "despesas" || tab === "mercado") fillSelectCompradores();
-        if (tab === "despesas") fillSelectTiposDespesa();
+        if (tab === "despesas") {
+          fillSelectTiposDespesa();
+          renderDespesaLista();
+        }
         if (tab === "mercado") renderMercadoLista();
         if (tab === "pendencias") {
           fillPendenciaPessoas();
@@ -849,6 +854,99 @@
     });
   }
 
+  function renderDespesaLista() {
+    const box = $("#lista-despesa");
+    const empty = $("#empty-despesa");
+    const totalBox = $("#despesa-total");
+    const countEl = $("#despesa-count");
+    if (!box || !empty) return;
+
+    const mesId = state.mesAtual || mesSelecionado;
+    const podeExcluirMes = mesEstaAberto(mesId);
+    const items = state.lancamentos
+      .filter((l) => l.tipo === "despesa" && l.mesId === mesId)
+      .sort((a, b) => {
+        if (a.data === b.data) return (b.criadoEm || "").localeCompare(a.criadoEm || "");
+        return b.data.localeCompare(a.data);
+      });
+
+    const total = items.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
+    if (countEl) countEl.textContent = String(items.length);
+
+    if (totalBox) {
+      if (!items.length) {
+        totalBox.classList.add("hidden");
+        totalBox.innerHTML = "";
+      } else {
+        totalBox.classList.remove("hidden");
+        const mesLabel = mesId ? labelMes(mesId) : "mês";
+        totalBox.innerHTML = `
+          <p class="mercado-total__label">Total despesas · ${escapeHtml(mesLabel)}</p>
+          <p class="mercado-total__valor">${formatMoney(total)}</p>`;
+      }
+    }
+
+    if (!items.length) {
+      box.innerHTML = "";
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+
+    box.innerHTML = items
+      .map((item) => {
+        const meu = item.lancadoPorId && item.lancadoPorId === usuarioAtualId;
+        const acao =
+          meu && podeExcluirMes
+            ? `<button type="button" class="btn btn--ghost btn--sm btn-excluir-despesa" data-id="${item.id}">Excluir</button>`
+            : "";
+        const crit = item.criterio === "igual_3" ? "Partes iguais" : "Proporcional";
+        const pag = PAGAMENTOS[item.pagamento] || item.pagamento || "—";
+        return `
+      <article class="mercado-item">
+        <div>
+          <p class="mercado-item__meta">${formatDate(item.data)} · ${escapeHtml(pag)} · ${escapeHtml(crit)}</p>
+          <p class="mercado-item__detalhe">${escapeHtml(item.descricao || "—")}</p>
+          <p class="mercado-item__por" style="margin-top:0.2rem">${escapeHtml(labelComprador(item.comprador))}</p>
+        </div>
+        <p class="mercado-item__valor">${formatMoney(item.valor)}</p>
+        <div class="mercado-item__rodape">
+          <p class="mercado-item__por">Por ${escapeHtml(item.lancadoPorNome || "—")}</p>
+          ${acao}
+        </div>
+      </article>`;
+      })
+      .join("");
+
+    box.querySelectorAll(".btn-excluir-despesa").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const item = state.lancamentos.find((l) => l.id === btn.dataset.id);
+        if (!item || item.tipo !== "despesa") return;
+        if (item.lancadoPorId !== usuarioAtualId) {
+          return toast("Só quem lançou pode excluir.");
+        }
+        if (!mesEstaAberto(item.mesId)) {
+          return toast("Só é possível excluir no mês aberto.");
+        }
+        if (!confirm(`Excluir "${item.descricao}" de ${formatMoney(item.valor)}?`)) return;
+
+        const autor = autorMeta();
+        state.lancamentos = state.lancamentos.filter((l) => l.id !== item.id);
+        notificarTodosExceto(autor.lancadoPorId, {
+          titulo: "Despesa excluída",
+          texto: `${autor.lancadoPorNome} excluiu "${item.descricao}" (${formatMoney(item.valor)}).`,
+          tipo: "exclusao",
+          refId: item.id,
+        });
+        saveState();
+        updateNotifBadge();
+        renderDespesaLista();
+        renderRelatorio();
+        toast("Despesa excluída.");
+      });
+    });
+  }
+
   function fillFiltroMes() {
     const select = $("#filtro-mes");
     if (!select) return;
@@ -991,6 +1089,7 @@
       $("#despesa-data").value = todayISO();
       fillSelectTiposDespesa();
       fillSelectCompradores();
+      renderDespesaLista();
       toast("Despesa lançada.");
     });
 
@@ -1186,6 +1285,7 @@
       fillFiltroMes();
       renderRelatorio();
       renderMercadoLista();
+      renderDespesaLista();
       toast(`${labelMes(id)} aberto.`);
     });
 
@@ -1210,6 +1310,7 @@
       fillFiltroMes();
       renderRelatorio();
       renderMercadoLista();
+      renderDespesaLista();
       toast(`${aberto.label} fechado.`);
     });
 
@@ -1229,6 +1330,7 @@
       updateNotifBadge();
       renderRelatorio();
       renderMercadoLista();
+      renderDespesaLista();
       toast(`Lançamentos de ${label} apagados.`);
     });
 
@@ -2116,6 +2218,7 @@
         updateNotifBadge();
         renderRelatorio();
         renderMercadoLista();
+        renderDespesaLista();
         toast("Excluído.");
       });
     });
