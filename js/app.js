@@ -2,6 +2,7 @@
   "use strict";
 
   const STORAGE_KEY = "despesas_domesticas_v1";
+  const BACKUP_KEY = "despesas_domesticas_backup_v1";
   const SESSION_KEY = "despesas_usuario_atual";
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
@@ -219,7 +220,92 @@
   function saveState() {
     state.updatedAt = Date.now();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    salvarBackupLocal("save");
     if (!applyingRemote) schedulePush();
+  }
+
+  function scoreEstado(s) {
+    if (!s || typeof s !== "object") return 0;
+    const meses = Array.isArray(s.meses) ? s.meses : [];
+    return (
+      (Array.isArray(s.lancamentos) ? s.lancamentos.length : 0) * 6 +
+      (Array.isArray(s.pendencias) ? s.pendencias.length : 0) * 2 +
+      (Array.isArray(s.pessoais) ? s.pessoais.length : 0) * 2 +
+      meses.length * 3 +
+      meses.filter((m) => m && m.status === "fechado").length * 5 +
+      (Array.isArray(s.pessoas) ? s.pessoas.length : 0) +
+      (s.mesAtual ? 2 : 0)
+    );
+  }
+
+  function salvarBackupLocal(motivo) {
+    try {
+      const score = scoreEstado(state);
+      if (score < 4) return;
+      let prev = null;
+      try {
+        prev = JSON.parse(localStorage.getItem(BACKUP_KEY) || "null");
+      } catch {
+        prev = null;
+      }
+      if (prev?.state && scoreEstado(prev.state) > score) return;
+      localStorage.setItem(
+        BACKUP_KEY,
+        JSON.stringify({
+          salvoEm: new Date().toISOString(),
+          motivo: motivo || "auto",
+          state: payloadFromState(),
+        })
+      );
+    } catch (err) {
+      console.warn("backup local:", err);
+    }
+  }
+
+  function lerBackupLocal() {
+    try {
+      const raw = localStorage.getItem(BACKUP_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed?.state) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  function devePreferirRemoto(local, remote) {
+    if (!remote) return false;
+    const rScore = scoreEstado(remote);
+    const lScore = scoreEstado(local);
+    const rAt = Number(remote.updatedAt) || 0;
+    const lAt = Number(local?.updatedAt) || 0;
+
+    // Nunca deixar um local pobre/vazio sobrescrever nuvem rica
+    if (rScore > 0 && lScore === 0) return true;
+    if (rScore >= lScore + 4) return true;
+
+    if (rAt > lAt) return true;
+    if (rAt < lAt) {
+      // Local "mais novo", mas bem mais pobre → manter remoto
+      if (lScore + 4 < rScore) return true;
+      return false;
+    }
+    return rScore >= lScore;
+  }
+
+  function podeEnviarParaNuvem(local, remote) {
+    if (!remote) return scoreEstado(local) > 0;
+    const lScore = scoreEstado(local);
+    const rScore = scoreEstado(remote);
+    const lAt = Number(local?.updatedAt) || 0;
+    const rAt = Number(remote?.updatedAt) || 0;
+
+    if (lScore === 0 && rScore > 0) return false;
+    if (rScore >= lScore + 4) return false;
+    if (lAt < rAt) return false;
+    if (lAt === rAt && lScore < rScore) return false;
+    return true;
   }
 
   function firebasePronto() {
@@ -300,6 +386,15 @@
       return;
     }
 
+    // Se o local está bem mais completo, não aceitar nuvem pobre (evita wipe)
+    if (!devePreferirRemoto(state, payload) && scoreEstado(state) > scoreEstado(payload)) {
+      console.warn("Ignorando nuvem mais pobre que o estado local.");
+      schedulePush();
+      return;
+    }
+
+    salvarBackupLocal("antes-remoto");
+
     applyingRemote = true;
     try {
       const grupos = normalizarGrupos(payload.grupos, payload.pesos);
@@ -366,14 +461,73 @@
     pushTimer = setTimeout(() => pushToCloud(), 400);
   }
 
+  function arquivarBackupNuvem(payload) {
+    if (!firebasePronto() || !codigoCasa || !navigator.onLine) return;
+    if (scoreEstado(payload) < 8) return;
+    try {
+      const backupsRef = firebase.database().ref(`casas/${codigoCasa}/backups`);
+      const id = String(payload.updatedAt || Date.now());
+      backupsRef.child(id).set({
+        ...payload,
+        _backupEm: Date.now(),
+      });
+      backupsRef
+        .once("value")
+        .then((snap) => {
+          const all = snap.val() || {};
+          const ids = Object.keys(all).sort((a, b) => Number(b) - Number(a));
+          if (ids.length <= 12) return;
+          const removals = ids.slice(12).map((key) => backupsRef.child(key).remove());
+          return Promise.all(removals);
+        })
+        .catch((err) => console.warn("prune backups:", err));
+    } catch (err) {
+      console.warn("backup nuvem:", err);
+    }
+  }
+
+  async function buscarMelhorBackupNuvem() {
+    if (!firebasePronto() || !codigoCasa) return null;
+    try {
+      const snap = await firebase.database().ref(`casas/${codigoCasa}/backups`).once("value");
+      const all = snap.val();
+      if (!all) return null;
+      let best = null;
+      Object.values(all).forEach((b) => {
+        if (!b || typeof b !== "object") return;
+        if (!best || scoreEstado(b) > scoreEstado(best)) best = b;
+      });
+      return best;
+    } catch (err) {
+      console.warn("buscar backup nuvem:", err);
+      return null;
+    }
+  }
+
   function pushToCloud() {
-    if (!syncRef || applyingRemote || !navigator.onLine) return;
+    if (!syncRef || applyingRemote || !navigator.onLine) return Promise.resolve();
     setSyncStatus("syncing", "Enviando alterações…");
     const payload = payloadFromState();
+    salvarBackupLocal("antes-push");
+
     return syncRef
-      .set(payload)
-      .then(() => {
+      .transaction((current) => {
+        if (!podeEnviarParaNuvem(payload, current)) {
+          return; // aborta — mantém a nuvem
+        }
+        return payload;
+      })
+      .then((result) => {
+        const remoteNow = result.snapshot ? result.snapshot.val() : null;
+        if (!result.committed) {
+          if (remoteNow && devePreferirRemoto(state, remoteNow)) {
+            applyRemotePayload(remoteNow);
+          }
+          setSyncStatus("online", "Nuvem preservada (versão mais completa)");
+          return;
+        }
         lastRemoteUpdatedAt = payload.updatedAt;
+        arquivarBackupNuvem(payload);
         setSyncStatus("online", "Dados sincronizados");
       })
       .catch((err) => {
@@ -418,19 +572,46 @@
 
       return syncRef
         .once("value")
-        .then((snap) => {
-          const remote = snap.val();
-          if (remote && remote.updatedAt) {
-            if (!state.updatedAt || remote.updatedAt >= state.updatedAt) {
-              applyRemotePayload(remote);
-            } else {
-              return pushToCloud();
+        .then(async (snap) => {
+          let remote = snap.val();
+
+          // Se a nuvem principal está pobre, tenta backup automático
+          if (!remote || scoreEstado(remote) < 5) {
+            const backup = await buscarMelhorBackupNuvem();
+            if (backup && scoreEstado(backup) > scoreEstado(remote || {})) {
+              remote = backup;
+              toast("Recuperado backup automático da nuvem.");
             }
-          } else if ((state.lancamentos || []).length || (state.pessoas || []).length) {
-            return pushToCloud();
-          } else {
+          }
+
+          // Backup local mais rico que nuvem e local atual?
+          const localBackup = lerBackupLocal();
+          if (
+            localBackup?.state &&
+            scoreEstado(localBackup.state) > scoreEstado(state) &&
+            scoreEstado(localBackup.state) > scoreEstado(remote || {})
+          ) {
+            applyingRemote = true;
+            try {
+              state = { ...localBackup.state, updatedAt: Date.now() };
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            } finally {
+              applyingRemote = false;
+            }
+            toast("Restaurado backup local mais completo.");
             return pushToCloud();
           }
+
+          if (remote && (remote.updatedAt || scoreEstado(remote) > 0)) {
+            if (devePreferirRemoto(state, remote)) {
+              applyRemotePayload(remote);
+            } else if (podeEnviarParaNuvem(state, remote)) {
+              return pushToCloud();
+            }
+          } else if (scoreEstado(state) > 0) {
+            return pushToCloud();
+          }
+          // remoto vazio e local vazio: não faz nada
         })
         .then(() => {
           const handler = (snap) => {
@@ -438,6 +619,11 @@
             if (!remote) return;
             if (Number(remote.updatedAt) === Number(state.updatedAt)) return;
             if (Number(remote.updatedAt) <= Number(lastRemoteUpdatedAt)) return;
+            if (!devePreferirRemoto(state, remote)) {
+              // Nuvem chegou mais pobre/desatualizada — reenvia o local se for seguro
+              if (podeEnviarParaNuvem(state, remote)) schedulePush();
+              return;
+            }
             applyRemotePayload(remote);
             setSyncStatus("online", "Atualizado da nuvem");
           };
@@ -3560,8 +3746,8 @@
   }
 
   function init() {
-    if (normalizarPendenciasIds()) saveState();
-    // Garante que nenhum modal ficou preso bloqueando toques
+    // Normaliza em memória; só grava depois do sync (evita timestamp novo em cima de cópia pobre)
+    normalizarPendenciasIds();
     document.querySelectorAll("dialog[open]").forEach((d) => {
       try {
         d.close();
@@ -3585,13 +3771,47 @@
       toast("Sincronização concluída.");
     });
 
+    $("#btn-restaurar-backup")?.addEventListener("click", () => {
+      const backup = lerBackupLocal();
+      if (!backup?.state) return toast("Nenhum backup local encontrado neste aparelho.");
+      const scoreB = scoreEstado(backup.state);
+      const scoreA = scoreEstado(state);
+      if (
+        !confirm(
+          `Restaurar backup de ${backup.salvoEm || "data desconhecida"}?\n` +
+            `Backup: score ${scoreB} · Atual: score ${scoreA}`
+        )
+      ) {
+        return;
+      }
+      applyingRemote = true;
+      try {
+        state = { ...backup.state, updatedAt: Date.now() };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } finally {
+        applyingRemote = false;
+      }
+      saveState();
+      updateMesStatus();
+      fillFiltroMes();
+      renderRelatorio();
+      renderMercadoLista();
+      renderDespesaLista();
+      renderPendencias();
+      renderPessoal();
+      fillConfigForm();
+      toast("Backup local restaurado. Sincronizando…");
+      pushToCloud();
+    });
+
     const salvo = usuarioAtualId && state.pessoas.find((p) => p.id === usuarioAtualId);
     const boot = async () => {
+      salvarBackupLocal("boot");
       if (codigoCasa) await startSync(codigoCasa);
       if (salvo) {
-        // revalida usuário após sync (pode ter vindo da nuvem)
-        const atualizado = state.pessoas.find((p) => p.id === usuarioAtualId)
-          || state.pessoas.find((p) => p.nome.toLowerCase() === salvo.nome.toLowerCase());
+        const atualizado =
+          state.pessoas.find((p) => p.id === usuarioAtualId) ||
+          state.pessoas.find((p) => p.nome.toLowerCase() === salvo.nome.toLowerCase());
         if (atualizado) entrarComo(atualizado);
         else {
           usuarioAtualId = null;
