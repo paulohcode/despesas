@@ -22,3 +22,10 @@ window.FIREBASE_CONFIG = {
   messagingSenderId: "849590406258",
   appId: "1:849590406258:web:3c40c9f8ab817254e746eb",
 };
+
+/** Chaves Web Push (VAPID) — permitem avisar o celular com o app fechado */
+window.VAPID_CONFIG = {
+  publicKey: "BG2b_t6xhdHhtLQXBkRsTf4GABLK3VQlEbB1dMqfxs2iG9pNf36G5LSqyuC0lgCXpxCUEbqh7SBOiygLZrlh5IE",
+  privateKey: "O76VIkK95TTi9msz9Iz1OTbb_LNbLRnPdY4rmZ9vjLI",
+  subject: "mailto:familia-silva@despesas.local",
+};

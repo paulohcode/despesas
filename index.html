@@ -70,8 +70,8 @@
     </header>
 
     <nav class="nav" role="tablist" aria-label="Navegação principal">
-      <button type="button" class="nav__btn is-active" data-tab="mercado" role="tab" aria-selected="true">Mercado</button>
-      <button type="button" class="nav__btn" data-tab="pessoal" role="tab" aria-selected="false">Pessoais</button>
+      <button type="button" class="nav__btn is-active" data-tab="pessoal" role="tab" aria-selected="true">Pessoais</button>
+      <button type="button" class="nav__btn" data-tab="mercado" role="tab" aria-selected="false">Mercado</button>
       <button type="button" class="nav__btn" data-tab="despesas" role="tab" aria-selected="false">Despesas</button>
       <button type="button" class="nav__btn" data-tab="vaquinha" role="tab" aria-selected="false">Vaquinha</button>
       <button type="button" class="nav__btn" data-tab="pendencias" role="tab" aria-selected="false">Entre nós</button>
@@ -84,7 +84,7 @@
 
     <main class="main">
       <!-- Mercado -->
-      <section id="tab-mercado" class="panel is-active" role="tabpanel">
+      <section id="tab-mercado" class="panel" role="tabpanel" hidden>
         <h2 class="panel__title">Lançamento de Mercado</h2>
         <p class="panel__hint">Registre compras com quem pagou e forma de pagamento.</p>
         <p id="aviso-mercado" class="aviso hidden">Abra um mês para lançar despesas.</p>
@@ -268,9 +268,9 @@
       </section>
 
       <!-- Pessoal -->
-      <section id="tab-pessoal" class="panel" role="tabpanel" hidden>
-        <h2 class="panel__title">Despesas pessoais</h2>
-        <p class="panel__hint">Sua lista particular. Você pode convidar alguém (ex.: esposa) para lançar e excluir junto — como dividir o controle das despesas.</p>
+      <section id="tab-pessoal" class="panel is-active" role="tabpanel">
+        <h2 class="panel__title">Pessoais</h2>
+        <p class="panel__hint">Controle despesas e receitas (salário, benefícios…). Você pode convidar alguém para lançar junto.</p>
 
         <div class="form" style="margin-bottom:1rem">
           <label class="field">
@@ -283,53 +283,14 @@
           </label>
         </div>
 
-        <details id="pessoal-cadastros" class="form pessoal-cadastros" style="margin-bottom:1.25rem">
-          <summary class="pessoal-cadastros__summary">Cadastros da lista</summary>
-          <p class="fieldset__hint" style="margin:0.75rem 0">Tipos, categorias e formas de pagamento desta lista (compartilhados com quem divide).</p>
+        <p id="aviso-pessoal-compartilhada" class="aviso hidden">Lista compartilhada — você e o dono podem lançar e excluir.</p>
 
-          <fieldset class="fieldset" style="margin-bottom:1rem">
-            <legend class="fieldset__legend">Tipos de despesa</legend>
-            <div class="row-add">
-              <label class="field field--grow">
-                <span class="field__label">Nome</span>
-                <input type="text" id="pessoal-tipo-nome" placeholder="Ex: Compra, Serviço, Assinatura" />
-              </label>
-              <button type="button" id="btn-add-pessoal-tipo" class="btn btn--secondary">Adicionar</button>
-            </div>
-            <ul id="lista-pessoal-tipos" class="lista-pessoas"></ul>
-            <p id="empty-pessoal-tipos" class="empty empty--sm hidden">Nenhum tipo cadastrado.</p>
-          </fieldset>
+        <div id="pessoal-total" class="mercado-total hidden" aria-live="polite"></div>
+        <div id="pessoal-resumo-financas" class="resumo" style="margin-top:0.75rem"></div>
 
-          <fieldset class="fieldset" style="margin-bottom:1rem">
-            <legend class="fieldset__legend">Categorias</legend>
-            <div class="row-add">
-              <label class="field field--grow">
-                <span class="field__label">Nome</span>
-                <input type="text" id="pessoal-cat-nome" placeholder="Ex: Alimentação, Combustível, Saúde" />
-              </label>
-              <button type="button" id="btn-add-pessoal-cat" class="btn btn--secondary">Adicionar</button>
-            </div>
-            <ul id="lista-pessoal-cats" class="lista-pessoas"></ul>
-            <p id="empty-pessoal-cats" class="empty empty--sm hidden">Nenhuma categoria cadastrada.</p>
-          </fieldset>
-
-          <fieldset class="fieldset">
-            <legend class="fieldset__legend">Formas de pagamento</legend>
-            <div class="row-add">
-              <label class="field field--grow">
-                <span class="field__label">Nome</span>
-                <input type="text" id="pessoal-pag-nome" placeholder="Ex: PIX, Crédito, Débito" />
-              </label>
-              <button type="button" id="btn-add-pessoal-pag" class="btn btn--secondary">Adicionar</button>
-            </div>
-            <ul id="lista-pessoal-pags" class="lista-pessoas"></ul>
-            <p id="empty-pessoal-pags" class="empty empty--sm hidden">Nenhuma forma cadastrada.</p>
-          </fieldset>
-        </details>
-
-        <form id="form-pessoal" class="form" autocomplete="off">
-          <fieldset class="fieldset">
-            <legend class="fieldset__legend">Nova despesa pessoal</legend>
+        <details id="pessoal-bloco-despesa" class="pessoal-acordeon" data-acordeon="lancar">
+          <summary class="pessoal-acordeon__summary">Nova despesa</summary>
+          <form id="form-pessoal" class="form" autocomplete="off">
             <label class="field">
               <span class="field__label">Descrição</span>
               <input type="text" id="pessoal-descricao" placeholder="Ex: Mercado do mês, gasolina, farmácia" required />
@@ -360,38 +321,163 @@
               <span class="field__label">Valor (R$)</span>
               <input type="number" id="pessoal-valor" min="0.01" step="0.01" placeholder="0,00" required />
             </label>
-          </fieldset>
-          <button type="submit" class="btn btn--primary btn--block">Salvar despesa pessoal</button>
-        </form>
-        <p id="aviso-pessoal-compartilhada" class="aviso hidden">Lista compartilhada — você e o dono podem lançar e excluir.</p>
+            <button type="submit" class="btn btn--primary btn--block">Salvar despesa</button>
+          </form>
+        </details>
 
-        <div id="pessoal-total" class="mercado-total hidden" aria-live="polite"></div>
-        <div id="pessoal-por-categoria" class="resumo" style="margin-top:0.75rem"></div>
+        <details id="pessoal-bloco-receita" class="pessoal-acordeon" data-acordeon="lancar">
+          <summary class="pessoal-acordeon__summary">Nova receita</summary>
+          <form id="form-pessoal-receita" class="form" autocomplete="off">
+            <p class="fieldset__hint">Salário, benefícios, freelance e outras entradas.</p>
+            <label class="field">
+              <span class="field__label">Descrição</span>
+              <input type="text" id="receita-descricao" placeholder="Ex: Salário mensal, VR, PLR" required />
+            </label>
+            <label class="field">
+              <span class="field__label">Data</span>
+              <input type="date" id="receita-data" required />
+            </label>
+            <label class="field">
+              <span class="field__label">Tipo de receita</span>
+              <select id="receita-tipo" required>
+                <option value="">Selecione…</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field__label">Forma de recebimento</span>
+              <select id="receita-pagamento" required>
+                <option value="">Selecione…</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field__label">Valor (R$)</span>
+              <input type="number" id="receita-valor" min="0.01" step="0.01" placeholder="0,00" required />
+            </label>
+            <button type="submit" class="btn btn--secondary btn--block">Salvar receita</button>
+          </form>
+        </details>
 
-        <div class="section-head">
-          <h3 class="section-head__title">Lançamentos</h3>
-          <span id="pessoal-count" class="section-head__meta">0</span>
-        </div>
-        <div id="lista-pessoal" class="lista-mercado"></div>
-        <p id="empty-pessoal" class="empty empty--sm">Nenhuma despesa pessoal neste mês.</p>
+        <details id="pessoal-bloco-fixas" class="pessoal-acordeon" data-acordeon="lancar">
+          <summary class="pessoal-acordeon__summary">
+            Despesas fixas
+            <span id="pessoal-fixas-pendentes" class="section-head__meta" style="margin-left:0.35rem"></span>
+          </summary>
+          <p class="fieldset__hint" style="margin:0.75rem 0">
+            Contas mensais (internet, academia…). Ao pagar, escolhendo a forma de pagamento, o valor entra nos lançamentos do mês selecionado acima.
+          </p>
+          <form id="form-pessoal-fixa" class="form" autocomplete="off">
+            <label class="field">
+              <span class="field__label">Descrição</span>
+              <input type="text" id="fixa-descricao" placeholder="Ex: Internet, Academia, Streaming" required />
+            </label>
+            <label class="field">
+              <span class="field__label">Valor mensal (R$)</span>
+              <input type="number" id="fixa-valor" min="0.01" step="0.01" placeholder="0,00" required />
+            </label>
+            <label class="field">
+              <span class="field__label">Tipo</span>
+              <select id="fixa-tipo" required>
+                <option value="">Selecione…</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field__label">Categoria</span>
+              <select id="fixa-categoria" required>
+                <option value="">Selecione…</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field__label">Dia do vencimento</span>
+              <input type="number" id="fixa-dia" min="1" max="31" step="1" placeholder="Ex: 10" />
+            </label>
+            <button type="submit" class="btn btn--primary btn--block">Cadastrar despesa fixa</button>
+          </form>
+          <div id="lista-pessoal-fixas" class="lista-fixas" style="margin-top:0.85rem"></div>
+          <p id="empty-pessoal-fixas" class="empty empty--sm">Nenhuma despesa fixa cadastrada.</p>
+        </details>
 
-        <div id="pessoal-compartilhar" class="form" style="margin-top:1.5rem">
-          <fieldset class="fieldset">
-            <legend class="fieldset__legend">Quem divide esta lista comigo</legend>
-            <p class="fieldset__hint">Quem você liberar pode ver, lançar e excluir despesas nesta lista (ex.: você e sua esposa).</p>
-            <div class="row-add">
+        <details id="pessoal-cadastros" class="pessoal-acordeon" data-acordeon="lancar">
+          <summary class="pessoal-acordeon__summary">Cadastros da lista</summary>
+          <p class="fieldset__hint" style="margin:0.75rem 0 1rem">Toque em cada item para expandir.</p>
+
+          <details class="pessoal-acordeon pessoal-acordeon--nested">
+            <summary class="pessoal-acordeon__summary">Tipos de despesa</summary>
+            <div class="row-add" style="margin-top:0.75rem">
               <label class="field field--grow">
-                <span class="field__label">Usuário</span>
-                <select id="pessoal-viewer">
-                  <option value="">Selecione…</option>
-                </select>
+                <span class="field__label">Nome</span>
+                <input type="text" id="pessoal-tipo-nome" placeholder="Ex: Compra, Serviço" />
               </label>
-              <button type="button" id="btn-pessoal-compartilhar" class="btn btn--secondary">Convidar</button>
+              <button type="button" id="btn-add-pessoal-tipo" class="btn btn--secondary">Adicionar</button>
             </div>
-            <ul id="lista-pessoal-acessos" class="lista-pessoas"></ul>
-            <p id="empty-pessoal-acessos" class="empty empty--sm hidden">Só você controla esta lista por enquanto.</p>
-          </fieldset>
-        </div>
+            <ul id="lista-pessoal-tipos" class="lista-pessoas"></ul>
+            <p id="empty-pessoal-tipos" class="empty empty--sm hidden">Nenhum tipo cadastrado.</p>
+          </details>
+
+          <details class="pessoal-acordeon pessoal-acordeon--nested">
+            <summary class="pessoal-acordeon__summary">Tipos de receita</summary>
+            <div class="row-add" style="margin-top:0.75rem">
+              <label class="field field--grow">
+                <span class="field__label">Nome</span>
+                <input type="text" id="pessoal-tipo-rec-nome" placeholder="Ex: Salário, Benefício" />
+              </label>
+              <button type="button" id="btn-add-pessoal-tipo-rec" class="btn btn--secondary">Adicionar</button>
+            </div>
+            <ul id="lista-pessoal-tipos-rec" class="lista-pessoas"></ul>
+            <p id="empty-pessoal-tipos-rec" class="empty empty--sm hidden">Nenhum tipo de receita.</p>
+          </details>
+
+          <details class="pessoal-acordeon pessoal-acordeon--nested">
+            <summary class="pessoal-acordeon__summary">Categorias (despesas)</summary>
+            <div class="row-add" style="margin-top:0.75rem">
+              <label class="field field--grow">
+                <span class="field__label">Nome</span>
+                <input type="text" id="pessoal-cat-nome" placeholder="Ex: Alimentação, Combustível" />
+              </label>
+              <button type="button" id="btn-add-pessoal-cat" class="btn btn--secondary">Adicionar</button>
+            </div>
+            <ul id="lista-pessoal-cats" class="lista-pessoas"></ul>
+            <p id="empty-pessoal-cats" class="empty empty--sm hidden">Nenhuma categoria.</p>
+          </details>
+
+          <details class="pessoal-acordeon pessoal-acordeon--nested">
+            <summary class="pessoal-acordeon__summary">Formas de pagamento / recebimento</summary>
+            <div class="row-add" style="margin-top:0.75rem">
+              <label class="field field--grow">
+                <span class="field__label">Nome</span>
+                <input type="text" id="pessoal-pag-nome" placeholder="Ex: PIX, Folha, Conta" />
+              </label>
+              <button type="button" id="btn-add-pessoal-pag" class="btn btn--secondary">Adicionar</button>
+            </div>
+            <ul id="lista-pessoal-pags" class="lista-pessoas"></ul>
+            <p id="empty-pessoal-pags" class="empty empty--sm hidden">Nenhuma forma.</p>
+          </details>
+        </details>
+
+        <details id="pessoal-bloco-mov" class="pessoal-acordeon" open>
+          <summary class="pessoal-acordeon__summary">
+            Movimentações do mês
+            <span id="pessoal-count" class="section-head__meta" style="margin-left:0.35rem">0</span>
+          </summary>
+          <div id="pessoal-por-categoria" class="resumo" style="margin-top:0.75rem"></div>
+          <div id="lista-pessoal" class="lista-mercado" style="margin-top:0.75rem"></div>
+          <p id="empty-pessoal" class="empty empty--sm">Nenhuma despesa ou receita neste mês.</p>
+        </details>
+
+        <details id="pessoal-compartilhar" class="pessoal-acordeon" data-acordeon="lancar">
+          <summary class="pessoal-acordeon__summary">Quem divide esta lista</summary>
+          <p class="fieldset__hint" style="margin:0.75rem 0">Quem você liberar pode ver, lançar e excluir despesas e receitas.</p>
+          <div class="row-add">
+            <label class="field field--grow">
+              <span class="field__label">Usuário</span>
+              <select id="pessoal-viewer">
+                <option value="">Selecione…</option>
+              </select>
+            </label>
+            <button type="button" id="btn-pessoal-compartilhar" class="btn btn--secondary">Convidar</button>
+          </div>
+          <ul id="lista-pessoal-acessos" class="lista-pessoas"></ul>
+          <p id="empty-pessoal-acessos" class="empty empty--sm hidden">Só você controla esta lista por enquanto.</p>
+        </details>
       </section>
 
       <!-- Relatório -->
@@ -563,6 +649,15 @@
             <p class="fieldset__hint" style="margin-top:0.75rem">
               Configure em <code>js/firebase-config.js</code> (console Firebase → Realtime Database) e publique no GitHub.
             </p>
+          </fieldset>
+        </div>
+
+        <div class="form" style="margin-bottom:1.25rem">
+          <fieldset class="fieldset">
+            <legend class="fieldset__legend">Notificações no celular</legend>
+            <p class="fieldset__hint">Com o app instalado e a permissão liberada, avisos chegam mesmo fora do atalho (Android/Chrome). No iPhone, use o app adicionado à Tela de Início (iOS 16.4+).</p>
+            <p class="peso-total">Status: <strong id="push-status">Desativado</strong></p>
+            <button type="button" id="btn-ativar-push" class="btn btn--primary btn--block">Ativar notificações</button>
           </fieldset>
         </div>
 

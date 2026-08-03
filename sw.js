@@ -1,4 +1,4 @@
-const CACHE_NAME = "despesas-v31";
+const CACHE_NAME = "despesas-v36";
 const ASSETS = [
   "./",
   "./index.html",
@@ -27,6 +27,67 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("message", (event) => {
   if (event.data === "SKIP_WAITING") self.skipWaiting();
+  if (event.data && event.data.type === "SHOW_NOTIFICATION") {
+    const { title, body, tag } = event.data;
+    event.waitUntil(
+      self.registration.showNotification(title || "Despesas", {
+        body: body || "",
+        icon: "./icons/icon-192.png",
+        badge: "./icons/icon-192.png",
+        tag: tag || "despesas",
+        data: { url: "./index.html" },
+        renotify: true,
+      })
+    );
+  }
+});
+
+self.addEventListener("push", (event) => {
+  let title = "Despesas";
+  let body = "Nova movimentação na casa";
+  let tag = "despesas-push";
+  try {
+    if (event.data) {
+      const data = event.data.json();
+      title = data.title || title;
+      body = data.body || data.message || body;
+      tag = data.tag || tag;
+    }
+  } catch (_) {
+    try {
+      body = event.data ? event.data.text() : body;
+    } catch (__) {
+      /* ignore */
+    }
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: "./icons/icon-192.png",
+      badge: "./icons/icon-192.png",
+      tag,
+      data: { url: "./index.html" },
+      renotify: true,
+      vibrate: [120, 60, 120],
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || "./index.html";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ("focus" in client) {
+          client.postMessage({ type: "NOTIFICATION_CLICK" });
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    })
+  );
 });
 
 self.addEventListener("fetch", (event) => {
@@ -43,7 +104,6 @@ self.addEventListener("fetch", (event) => {
       url.pathname.endsWith("manifest.json") ||
       url.pathname.endsWith("/"));
 
-  // Com internet: busca versão nova no GitHub Pages e atualiza o cache
   if (isAppShell) {
     event.respondWith(
       fetch(event.request)
