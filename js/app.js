@@ -1077,14 +1077,79 @@
   function renderPendencias() {
     const box = $("#lista-pendencias");
     const empty = $("#empty-pendencias");
+    const resumo = $("#resumo-pendencias");
     const u = usuarioAtual();
     if (!u) return;
 
     const items = state.pendencias.filter(
       (p) => p.credorId === u.id || p.devedorId === u.id
     );
+    const abertas = items.filter((p) => p.status === "pendente");
 
     $("#pendencias-count").textContent = `${items.length} ite${items.length === 1 ? "m" : "ns"}`;
+
+    // Cards por pessoa (somente pendentes)
+    const porPessoa = {};
+    abertas.forEach((p) => {
+      const souCredor = p.credorId === u.id;
+      const outraId = souCredor ? p.devedorId : p.credorId;
+      const outraNome = souCredor ? p.devedorNome : p.credorNome;
+      if (!porPessoa[outraId]) {
+        porPessoa[outraId] = { id: outraId, nome: outraNome, receber: 0, pagar: 0 };
+      }
+      if (souCredor) porPessoa[outraId].receber += Number(p.valor) || 0;
+      else porPessoa[outraId].pagar += Number(p.valor) || 0;
+    });
+
+    const cards = Object.values(porPessoa).sort((a, b) =>
+      a.nome.localeCompare(b.nome, "pt-BR")
+    );
+
+    const totalReceber = cards.reduce((acc, c) => acc + c.receber, 0);
+    const totalPagar = cards.reduce((acc, c) => acc + c.pagar, 0);
+
+    if (resumo) {
+      if (!cards.length) {
+        resumo.innerHTML = `
+          <div class="card-resumo">
+            <p class="card-resumo__label">Resumo entre nós</p>
+            <p class="card-resumo__valor" style="font-size:1.1rem;color:var(--ink-muted)">Nada pendente</p>
+            <p class="card-resumo__meta">Quando houver valores em aberto, o saldo por pessoa aparece aqui.</p>
+          </div>`;
+      } else {
+        resumo.innerHTML = `
+          <div class="card-resumo card-resumo--total">
+            <p class="card-resumo__label">Seu resumo aberto</p>
+            <p class="card-resumo__valor" style="font-size:1.25rem">
+              Receber ${formatMoney(totalReceber)} · Pagar ${formatMoney(totalPagar)}
+            </p>
+            <p class="card-resumo__meta">${cards.length} pessoa(s) com pendência</p>
+          </div>
+          <div class="grupos-grid">
+            ${cards
+              .map((c) => {
+                const saldo = c.receber - c.pagar;
+                let saldoTxt = "Quitados entre vocês";
+                let saldoClass = "saldo--ok";
+                if (saldo > 0.004) {
+                  saldoTxt = `Saldo: a receber ${formatMoney(saldo)}`;
+                  saldoClass = "saldo--receber";
+                } else if (saldo < -0.004) {
+                  saldoTxt = `Saldo: a pagar ${formatMoney(Math.abs(saldo))}`;
+                  saldoClass = "saldo--pagar";
+                }
+                return `
+              <div class="card-grupo">
+                <p class="card-grupo__nome">${escapeHtml(c.nome)}</p>
+                <p class="card-grupo__peso">A receber <strong class="saldo--receber">${formatMoney(c.receber)}</strong></p>
+                <p class="card-grupo__peso">A pagar <strong class="saldo--pagar">${formatMoney(c.pagar)}</strong></p>
+                <p class="card-grupo__valor ${saldoClass}" style="font-size:0.95rem;margin-top:0.45rem">${saldoTxt}</p>
+              </div>`;
+              })
+              .join("")}
+          </div>`;
+      }
+    }
 
     if (!items.length) {
       box.innerHTML = "";
