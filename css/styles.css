@@ -1033,6 +1033,55 @@ select {
   color: var(--ink-muted);
 }
 
+.acerto-lista {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.acerto-lista__titulo {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}
+
+.acerto-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.acerto-item__fluxo {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.acerto-item__seta {
+  display: inline-block;
+  margin: 0 0.35rem;
+  color: var(--brand);
+  font-weight: 700;
+}
+
+.acerto-item__valor {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--brand-deep);
+  white-space: nowrap;
+}
+
 /* Login */
 .login {
   min-height: 100dvh;

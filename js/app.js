@@ -1711,6 +1711,134 @@
     return { classe: "saldo--pagar", texto: `A pagar ${formatMoney(v)}` };
   }
 
+  function grupoIdDoComprador(comprador) {
+    if (!comprador) return null;
+    if ((state.grupos || []).some((g) => g.id === comprador)) return comprador;
+    return LEGACY_COMPRADORES[comprador]?.grupo || null;
+  }
+
+  function calcularSaldosGrupos(casa) {
+    const grupos = state.grupos || [];
+    const map = {};
+    grupos.forEach((g) => {
+      map[g.id] = { id: g.id, nome: g.nome, pagou: 0, cota: 0, saldo: 0 };
+    });
+
+    casa.forEach((item) => {
+      const valor = Number(item.valor) || 0;
+      const pagadorId = grupoIdDoComprador(item.comprador);
+      // Sem quem pagou identificado, não entra no acerto entre grupos
+      if (!pagadorId || !map[pagadorId]) return;
+
+      map[pagadorId].pagou += valor;
+
+      let div = item.divisao;
+      if (!div || typeof div !== "object") {
+        const crit = item.criterio === "igual_3" ? "igual_3" : "proporcional";
+        div = dividirValor(valor, crit);
+      }
+      grupos.forEach((g) => {
+        if (map[g.id]) map[g.id].cota += Number(div[g.id]) || 0;
+      });
+    });
+
+    Object.values(map).forEach((g) => {
+      g.saldo = g.pagou - g.cota;
+    });
+    return Object.values(map);
+  }
+
+  /** Minimiza transferências: quem está negativo paga quem está positivo. */
+  function calcularTransferencias(saldos) {
+    const EPS = 0.005;
+    const devedores = saldos
+      .filter((s) => s.saldo < -EPS)
+      .map((s) => ({ id: s.id, nome: s.nome, restante: -s.saldo }))
+      .sort((a, b) => b.restante - a.restante);
+    const credores = saldos
+      .filter((s) => s.saldo > EPS)
+      .map((s) => ({ id: s.id, nome: s.nome, restante: s.saldo }))
+      .sort((a, b) => b.restante - a.restante);
+
+    const transfers = [];
+    let i = 0;
+    let j = 0;
+    while (i < devedores.length && j < credores.length) {
+      const d = devedores[i];
+      const c = credores[j];
+      const valor = Math.min(d.restante, c.restante);
+      if (valor > EPS) {
+        transfers.push({
+          deId: d.id,
+          deNome: d.nome,
+          paraId: c.id,
+          paraNome: c.nome,
+          valor,
+        });
+      }
+      d.restante -= valor;
+      c.restante -= valor;
+      if (d.restante <= EPS) i += 1;
+      if (c.restante <= EPS) j += 1;
+    }
+    return transfers;
+  }
+
+  function htmlBlocoAcerto({ titulo, meta, saldos, transfers, vazio, mostrarCabecalho = true }) {
+    if (vazio) {
+      return `
+        <div class="card-resumo">
+          <p class="card-resumo__label">${escapeHtml(titulo)}</p>
+          <p class="card-resumo__meta" style="opacity:1;margin-top:0.35rem">Nada a acertar neste mês.</p>
+        </div>`;
+    }
+
+    const cabecalho = mostrarCabecalho
+      ? `
+      <div class="card-resumo">
+        <p class="card-resumo__label">${escapeHtml(titulo)}</p>
+        <p class="card-resumo__meta" style="opacity:1;margin-top:0.25rem">${escapeHtml(meta)}</p>
+      </div>`
+      : "";
+
+    const saldosHtml = `
+      <div class="grupos-grid">
+        ${saldos
+          .map((s) => {
+            const t = textoSaldo(s.saldo);
+            return `
+          <div class="card-grupo">
+            <p class="card-grupo__nome">${escapeHtml(s.nome)}</p>
+            <p class="card-grupo__valor ${t.classe}">${t.texto}</p>
+            <p class="card-grupo__peso">Cota ${formatMoney(s.cota)} · Pagou ${formatMoney(s.pagou)}</p>
+          </div>`;
+          })
+          .join("")}
+      </div>`;
+
+    const transfersHtml = transfers.length
+      ? `
+      <div class="acerto-lista">
+        <p class="acerto-lista__titulo">Quem passa pra quem</p>
+        ${transfers
+          .map(
+            (t) => `
+          <div class="acerto-item">
+            <p class="acerto-item__fluxo">
+              <strong>${escapeHtml(t.deNome)}</strong>
+              <span class="acerto-item__seta" aria-hidden="true">→</span>
+              <strong>${escapeHtml(t.paraNome)}</strong>
+            </p>
+            <p class="acerto-item__valor">${formatMoney(t.valor)}</p>
+          </div>`
+          )
+          .join("")}
+      </div>`
+      : `<p class="fieldset__hint" style="margin:0.75rem 0 0">Todos quitados — nenhuma transferência.</p>`;
+
+    return `${cabecalho}${saldosHtml}${transfersHtml}`;
+  }
+
   function fillSelectTiposDespesa(selected = "") {
     const select = $("#despesa-descricao");
     if (!select) return;
@@ -2070,7 +2198,7 @@
         return b.data.localeCompare(a.data);
       });
 
-    const casa = items.filter((l) => l.tipo !== "vaquinha");
+    const casa = items.filter((l) => l.tipo === "mercado" || l.tipo === "despesa");
     const vaquinhas = items.filter((l) => l.tipo === "vaquinha");
 
     const totais = casa.reduce(
@@ -2104,7 +2232,7 @@
     const tituloMes = mes ? mes.label : "Nenhum mês";
     $("#resumo-cards").innerHTML = `
       <div class="card-resumo card-resumo--total">
-        <p class="card-resumo__label">Casa — ${escapeHtml(tituloMes)}</p>
+        <p class="card-resumo__label">Mercado + Despesas — ${escapeHtml(tituloMes)}</p>
         <p class="card-resumo__valor">${formatMoney(totais.geral)}</p>
         <p class="card-resumo__meta">${casa.length} lançamento(s) · pesos ${soma.toFixed(1)}</p>
       </div>
@@ -2123,13 +2251,28 @@
           .join("")}
       </div>`;
 
+    const acertoBox = $("#resumo-acerto");
+    if (acertoBox) {
+      const saldos = calcularSaldosGrupos(casa);
+      const transfers = calcularTransferencias(saldos);
+      acertoBox.innerHTML = htmlBlocoAcerto({
+        titulo: `Acerto — ${tituloMes}`,
+        meta: casa.length
+          ? "Somente mercado e despesas. Vaquinha e Entre nós ficam separados."
+          : "Sem lançamentos de mercado/despesa.",
+        saldos,
+        transfers,
+        vazio: !casa.length,
+      });
+    }
+
     const resumoVaq = $("#resumo-vaquinhas");
     if (vaquinhas.length) {
       resumoVaq.innerHTML = `
         <div class="card-resumo">
-          <p class="card-resumo__label">Vaquinhas — ${escapeHtml(tituloMes)}</p>
+          <p class="card-resumo__label">Vaquinhas (separado) — ${escapeHtml(tituloMes)}</p>
           <p class="card-resumo__valor" style="color:var(--brand)">${formatMoney(totalVaquinhas)}</p>
-          <p class="card-resumo__meta">${vaquinhas.length} vaquinha(s)</p>
+          <p class="card-resumo__meta">${vaquinhas.length} vaquinha(s) · não entra no acerto da casa</p>
         </div>
         <div class="grupos-grid">
           ${listaPessoasVaq
