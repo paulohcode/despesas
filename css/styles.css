@@ -404,6 +404,54 @@ select {
   font-weight: 600;
 }
 
+.push-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.65rem 1rem 0;
+  padding: 0.75rem 0.9rem;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--brand-soft), #e8f5f0);
+  border: 1px solid color-mix(in srgb, var(--brand) 22%, transparent);
+  color: var(--brand-deep);
+}
+
+.push-banner.hidden {
+  display: none;
+}
+
+.push-banner__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.push-banner__title {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.push-banner__text {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--ink-muted);
+}
+
+.push-banner__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.modal__actions--stack {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
 .form.is-disabled {
   opacity: 0.55;
   pointer-events: none;

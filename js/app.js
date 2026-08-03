@@ -728,6 +728,90 @@
     return (Number(value) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   }
 
+  /** Só dígitos — máscara trata como centavos (51991 → 519,91) */
+  function digitsOnly(str) {
+    return String(str ?? "").replace(/\D/g, "");
+  }
+
+  function formatMoneyDigits(digits) {
+    let d = digitsOnly(digits);
+    if (!d) return "";
+    d = d.replace(/^0+(?=\d)/, "");
+    if (!d) d = "0";
+    if (d.length > 12) d = d.slice(0, 12);
+    const padded = d.padStart(3, "0");
+    const cents = padded.slice(-2);
+    let ints = padded.slice(0, -2);
+    ints = ints.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    return `${ints},${cents}`;
+  }
+
+  function parseMoneyInput(str) {
+    if (str == null || str === "") return NaN;
+    if (typeof str === "number") return str;
+    const raw = String(str).trim();
+    if (!raw) return NaN;
+    if (raw.includes(",")) {
+      const n = Number(raw.replace(/\./g, "").replace(",", "."));
+      return Number.isFinite(n) ? n : NaN;
+    }
+    // número puro estilo "12.34" (edição antiga / type=number)
+    if (/^\d+(\.\d+)?$/.test(raw)) {
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : NaN;
+    }
+    const digits = digitsOnly(raw);
+    if (!digits) return NaN;
+    return Number(digits) / 100;
+  }
+
+  function setMoneyInput(sel, valor) {
+    const el = typeof sel === "string" ? $(sel) : sel;
+    if (!el) return;
+    const n = Number(valor);
+    if (!(n >= 0) || !Number.isFinite(n)) {
+      el.value = "";
+      return;
+    }
+    el.value = formatMoneyDigits(String(Math.round(n * 100)));
+  }
+
+  function bindMoneyInput(el) {
+    if (!el || el.dataset.moneyBound === "1") return;
+    el.dataset.moneyBound = "1";
+    el.setAttribute("inputmode", "numeric");
+    el.setAttribute("autocomplete", "off");
+    el.addEventListener("input", () => {
+      const startLen = el.value.length;
+      const pos = el.selectionStart;
+      const formatted = formatMoneyDigits(el.value);
+      el.value = formatted;
+      // cursor no fim (máscara de centavos)
+      try {
+        const end = formatted.length;
+        el.setSelectionRange(end, end);
+      } catch {
+        /* ignore */
+      }
+      void startLen;
+      void pos;
+      el.dispatchEvent(new Event("moneychange", { bubbles: true }));
+    });
+    el.addEventListener("blur", () => {
+      const digits = digitsOnly(el.value);
+      el.value = digits ? formatMoneyDigits(digits) : "";
+    });
+    if (el.value && !String(el.value).includes(",")) {
+      const n = Number(el.value);
+      if (Number.isFinite(n) && n >= 0) setMoneyInput(el, n);
+    }
+  }
+
+  function bindMoneyInputs(root = document) {
+    const scope = root instanceof Element ? root : document;
+    scope.querySelectorAll("input.input-money").forEach((el) => bindMoneyInput(el));
+  }
+
   function formatDate(iso) {
     if (!iso) return "—";
     const [y, m, d] = iso.split("-");
@@ -934,6 +1018,7 @@
 
   /* ---------- Notificações ---------- */
   const PUSH_SEEN_KEY = "despesas_push_seen_v1";
+  const PUSH_PROMPT_DISMISS_KEY = "despesas_push_prompt_dismiss_v1";
   let pushBuildRequest = null;
 
   function urlBase64ToUint8Array(base64String) {
@@ -968,16 +1053,110 @@
     return "Notification" in window && Notification.permission === "granted";
   }
 
-  function atualizarPushStatus() {
-    const el = $("#push-status");
-    if (!el) return;
-    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
-      el.textContent = "Não suportado neste navegador";
+  function pushSuportado() {
+    return "Notification" in window && "serviceWorker" in navigator && "PushManager" in window;
+  }
+
+  function pushPromptDispensado() {
+    try {
+      const until = Number(localStorage.getItem(PUSH_PROMPT_DISMISS_KEY) || 0);
+      return until > Date.now();
+    } catch {
+      return false;
+    }
+  }
+
+  function dispensarPushPrompt(dias = 3) {
+    try {
+      localStorage.setItem(PUSH_PROMPT_DISMISS_KEY, String(Date.now() + dias * 24 * 60 * 60 * 1000));
+    } catch {
+      /* ignore */
+    }
+    atualizarBannerPush();
+  }
+
+  function limparDismissPushPrompt() {
+    try {
+      localStorage.removeItem(PUSH_PROMPT_DISMISS_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function irParaConfig() {
+    $$(".nav__btn").find((b) => b.dataset.tab === "config")?.click();
+    setTimeout(() => {
+      $("#btn-ativar-push")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 120);
+  }
+
+  function fecharModalAtivarPush() {
+    const dlg = $("#modal-ativar-push");
+    if (dlg?.open) dlg.close();
+  }
+
+  function textoModalPush() {
+    if (!pushSuportado()) {
+      return "Este navegador não suporta notificações push. No iPhone, adicione o app à Tela de Início (iOS 16.4+).";
+    }
+    if (Notification.permission === "denied") {
+      return "As notificações estão bloqueadas. Abra as configurações do celular/navegador, permita notificações para este app e toque em Ativar de novo.";
+    }
+    return "Ative para receber avisos de novos lançamentos, vaquinhas e pendências mesmo com o app fechado.";
+  }
+
+  function mostrarModalAtivarPush() {
+    const dlg = $("#modal-ativar-push");
+    if (!dlg) return;
+    const txt = $("#modal-ativar-push-texto");
+    if (txt) txt.textContent = textoModalPush();
+    const btnAtivar = $("#btn-modal-push-ativar");
+    if (btnAtivar) {
+      btnAtivar.textContent =
+        Notification.permission === "denied" ? "Já liberei — tentar de novo" : "Ativar agora";
+    }
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function atualizarBannerPush() {
+    const banner = $("#banner-push");
+    if (!banner) return;
+    const mostrar =
+      !!usuarioAtualId &&
+      pushSuportado() &&
+      Notification.permission !== "granted" &&
+      !pushPromptDispensado();
+    banner.classList.toggle("hidden", !mostrar);
+  }
+
+  function talvezPedirNotificacoes() {
+    if (!usuarioAtualId || !pushSuportado()) {
+      atualizarBannerPush();
       return;
     }
-    if (Notification.permission === "granted") el.textContent = "Ativado";
-    else if (Notification.permission === "denied") el.textContent = "Bloqueado nas configurações do celular";
-    else el.textContent = "Desativado";
+    if (Notification.permission === "granted") {
+      limparDismissPushPrompt();
+      atualizarBannerPush();
+      return;
+    }
+    atualizarBannerPush();
+    if (pushPromptDispensado()) return;
+    setTimeout(() => {
+      if (!usuarioAtualId || notificacoesHabilitadas() || pushPromptDispensado()) return;
+      mostrarModalAtivarPush();
+    }, 900);
+  }
+
+  function atualizarPushStatus() {
+    const el = $("#push-status");
+    if (el) {
+      if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+        el.textContent = "Não suportado neste navegador";
+      } else if (Notification.permission === "granted") el.textContent = "Ativado";
+      else if (Notification.permission === "denied") el.textContent = "Bloqueado nas configurações do celular";
+      else el.textContent = "Desativado";
+    }
+    atualizarBannerPush();
   }
 
   async function mostrarNotificacaoSistema(titulo, texto, tag) {
@@ -1032,10 +1211,18 @@
       return false;
     }
 
+    if (Notification.permission === "denied") {
+      atualizarPushStatus();
+      mostrarModalAtivarPush();
+      toast("Permissão bloqueada. Libere nas configurações do celular e tente de novo.");
+      return false;
+    }
+
     const perm = await Notification.requestPermission();
     atualizarPushStatus();
     if (perm !== "granted") {
       toast("Permissão negada. Libere nas configurações do navegador/app.");
+      atualizarBannerPush();
       return false;
     }
 
@@ -1055,6 +1242,9 @@
         });
       }
       await salvarInscricaoPush(sub);
+      limparDismissPushPrompt();
+      fecharModalAtivarPush();
+      atualizarBannerPush();
       await mostrarNotificacaoSistema(
         "Notificações ativas",
         "Você receberá avisos de lançamentos e pendências.",
@@ -1250,6 +1440,7 @@
         .catch(() => {});
     }
     toast(`Bem-vindo(a), ${pessoa.nome}${isAdmin() ? " (admin)" : ""}!`);
+    talvezPedirNotificacoes();
   }
 
   function sair() {
@@ -1258,6 +1449,8 @@
     localStorage.removeItem(SESSION_KEY);
     $("#app").classList.add("hidden");
     $("#tela-login").classList.remove("hidden");
+    fecharModalAtivarPush();
+    atualizarBannerPush();
     renderLoginUI();
     const sel = $("#login-usuario");
     if (sel) sel.value = "";
@@ -1579,7 +1772,7 @@
     $("#mercado-data").value = item.data || todayISO();
     $("#mercado-comprador").value = item.comprador || "";
     $("#mercado-pagamento").value = item.pagamento || "pix";
-    $("#mercado-valor").value = Number(item.valor) || "";
+    setMoneyInput("#mercado-valor", item.valor);
     setEditModeButtons(
       "#btn-salvar-mercado",
       "#btn-cancelar-mercado",
@@ -1721,7 +1914,7 @@
     $("#despesa-comprador").value = item.comprador || "";
     $("#despesa-pagamento").value = item.pagamento || "pix";
     $("#despesa-criterio").value = item.criterio === "igual_3" ? "igual_3" : "proporcional";
-    $("#despesa-valor").value = Number(item.valor) || "";
+    setMoneyInput("#despesa-valor", item.valor);
     setEditModeButtons(
       "#btn-salvar-despesa",
       "#btn-cancelar-despesa",
@@ -1763,6 +1956,7 @@
     $("#despesa-data").value = todayISO();
     $("#vaquinha-data").value = todayISO();
     $("#pendencia-data").value = todayISO();
+    bindMoneyInputs();
 
     $("#form-mercado").addEventListener("submit", (e) => {
       e.preventDefault();
@@ -1770,7 +1964,7 @@
       const data = $("#mercado-data").value;
       const comprador = $("#mercado-comprador").value;
       const pagamento = $("#mercado-pagamento").value;
-      const valor = Number($("#mercado-valor").value);
+      const valor = parseMoneyInput($("#mercado-valor").value);
       if (!data || !comprador || !pagamento || !(valor > 0)) return toast("Preencha todos os campos.");
       if (data.slice(0, 7) !== state.mesAtual) return toast(`A data deve pertencer a ${labelMes(state.mesAtual)}.`);
 
@@ -1880,7 +2074,7 @@
       const comprador = $("#despesa-comprador").value;
       const pagamento = $("#despesa-pagamento").value;
       const criterio = $("#despesa-criterio").value;
-      const valor = Number($("#despesa-valor").value);
+      const valor = parseMoneyInput($("#despesa-valor").value);
       if (!descricao || !data || !comprador || !pagamento || !criterio || !(valor > 0)) {
         return toast("Preencha todos os campos.");
       }
@@ -2727,7 +2921,7 @@
     editingFixaId = fixa.id;
     fillPessoalSelectsCadastro(donoId);
     $("#fixa-descricao").value = fixa.descricao || "";
-    $("#fixa-valor").value = Number(fixa.valor) || "";
+    setMoneyInput("#fixa-valor", fixa.valor);
     $("#fixa-tipo").value = fixa.tipoId || "";
     $("#fixa-categoria").value = fixa.categoriaId || "";
     $("#fixa-dia").value = fixa.diaVencimento || "";
@@ -3241,7 +3435,7 @@
     $("#pessoal-tipo").value = item.tipoId || "";
     $("#pessoal-categoria").value = item.categoriaId || "";
     $("#pessoal-pagamento").value = item.pagamentoId || "";
-    $("#pessoal-valor").value = Number(item.valor) || "";
+    setMoneyInput("#pessoal-valor", item.valor);
     setEditModeButtons(
       "#btn-salvar-pessoal",
       "#btn-cancelar-pessoal",
@@ -3271,7 +3465,7 @@
     $("#receita-data").value = item.data || todayISO();
     $("#receita-tipo").value = item.tipoId || "";
     $("#receita-pagamento").value = item.pagamentoId || "";
-    $("#receita-valor").value = Number(item.valor) || "";
+    setMoneyInput("#receita-valor", item.valor);
     setEditModeButtons(
       "#btn-salvar-receita",
       "#btn-cancelar-receita",
@@ -3419,7 +3613,7 @@
       const tipoId = $("#pessoal-tipo").value;
       const categoriaId = $("#pessoal-categoria").value;
       const pagamentoId = $("#pessoal-pagamento").value;
-      const valor = Number($("#pessoal-valor").value);
+      const valor = parseMoneyInput($("#pessoal-valor").value);
       const tipo = (state.pessoalTipos || []).find((t) => t.id === tipoId && t.donoId === donoId);
       const categoria = (state.pessoalCategorias || []).find(
         (c) => c.id === categoriaId && c.donoId === donoId
@@ -3522,7 +3716,7 @@
       const data = $("#receita-data").value;
       const tipoId = $("#receita-tipo").value;
       const pagamentoId = $("#receita-pagamento").value;
-      const valor = Number($("#receita-valor").value);
+      const valor = parseMoneyInput($("#receita-valor").value);
       const tipo = (state.pessoalTiposReceita || []).find(
         (t) => t.id === tipoId && t.donoId === donoId
       );
@@ -3617,7 +3811,7 @@
         return toast("Sem permissão para cadastrar nesta lista.");
       }
       const descricao = $("#fixa-descricao").value.trim();
-      const valor = Number($("#fixa-valor").value);
+      const valor = parseMoneyInput($("#fixa-valor").value);
       const tipoId = $("#fixa-tipo").value;
       const categoriaId = $("#fixa-categoria").value;
       const diaRaw = $("#fixa-dia").value;
@@ -3742,7 +3936,7 @@
       const data = $("#pendencia-data").value;
       const tipo = $("#pendencia-tipo").value;
       const outraId = $("#pendencia-pessoa").value;
-      const valor = Number($("#pendencia-valor").value);
+      const valor = parseMoneyInput($("#pendencia-valor").value);
       const outra = state.pessoas.find((p) => p.id === outraId);
 
       if (!descricao || !data || !outra || !(valor > 0)) {
@@ -4012,14 +4206,20 @@
     const box = $("#vaquinha-compras");
     const row = document.createElement("div");
     row.className = "compra-row";
+    const valorFmt =
+      valor === "" || valor == null || !(Number(valor) >= 0)
+        ? ""
+        : formatMoneyDigits(String(Math.round(Number(valor) * 100)));
     row.innerHTML = `
       <select class="compra-pessoa" required>${opcoesPessoasHtml(pessoaId)}</select>
-      <input type="number" class="compra-valor" min="0.01" step="0.01" placeholder="0,00" value="${valor}" required />
+      <input type="text" class="compra-valor input-money" inputmode="numeric" placeholder="0,00" value="${valorFmt}" required />
       <button type="button" class="btn btn--icon btn-remover-compra" title="Remover" aria-label="Remover">×</button>
     `;
     box.appendChild(row);
+    const valorEl = row.querySelector(".compra-valor");
+    bindMoneyInput(valorEl);
     row.querySelector(".compra-pessoa").addEventListener("change", atualizarPreviewVaquinha);
-    row.querySelector(".compra-valor").addEventListener("input", atualizarPreviewVaquinha);
+    valorEl.addEventListener("input", atualizarPreviewVaquinha);
     row.querySelector(".btn-remover-compra").addEventListener("click", () => {
       if ($$("#vaquinha-compras .compra-row").length <= 1) {
         return toast("Mantenha ao menos uma compra.");
@@ -4040,7 +4240,7 @@
     const compras = [];
     $$("#vaquinha-compras .compra-row").forEach((row) => {
       const pessoaId = row.querySelector(".compra-pessoa").value;
-      const valor = Number(row.querySelector(".compra-valor").value);
+      const valor = parseMoneyInput(row.querySelector(".compra-valor").value);
       const pessoa = state.pessoas.find((p) => p.id === pessoaId);
       if (pessoa && valor > 0) {
         compras.push({ id: uid(), pessoaId, nome: pessoa.nome, valor });
@@ -5502,6 +5702,32 @@
     $("#btn-install-login")?.addEventListener("click", tryInstall);
     $("#btn-ativar-push")?.addEventListener("click", () => {
       ativarNotificacoesPush();
+    });
+    $("#btn-banner-push-ativar")?.addEventListener("click", () => {
+      ativarNotificacoesPush();
+    });
+    $("#btn-banner-push-depois")?.addEventListener("click", () => {
+      dispensarPushPrompt(3);
+      toast("Ok. Você pode ativar depois em Config.");
+    });
+    $("#btn-modal-push-ativar")?.addEventListener("click", async () => {
+      const ok = await ativarNotificacoesPush();
+      if (!ok && Notification.permission === "denied") {
+        /* modal já mostra instruções */
+      }
+    });
+    $("#btn-modal-push-config")?.addEventListener("click", () => {
+      fecharModalAtivarPush();
+      irParaConfig();
+    });
+    $("#btn-modal-push-depois")?.addEventListener("click", () => {
+      fecharModalAtivarPush();
+      dispensarPushPrompt(3);
+    });
+    $("#modal-ativar-push")?.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      fecharModalAtivarPush();
+      dispensarPushPrompt(1);
     });
     atualizarPushStatus();
     updateInstallHint();
