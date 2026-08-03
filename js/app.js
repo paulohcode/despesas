@@ -301,57 +301,63 @@
     }
 
     applyingRemote = true;
-    const grupos = normalizarGrupos(payload.grupos, payload.pesos);
-    state = {
-      lancamentos: Array.isArray(payload.lancamentos) ? payload.lancamentos : [],
-      grupos,
-      pesos: pesosFromGrupos(grupos),
-      meses: Array.isArray(payload.meses) ? payload.meses : [],
-      mesAtual: payload.mesAtual || null,
-      pessoas: Array.isArray(payload.pessoas) ? payload.pessoas : [],
-      tiposDespesa: normalizarTiposDespesa(payload.tiposDespesa),
-      pendencias: Array.isArray(payload.pendencias) ? payload.pendencias : [],
-      pessoais: Array.isArray(payload.pessoais) ? payload.pessoais : [],
-      pessoalAcessos: Array.isArray(payload.pessoalAcessos) ? payload.pessoalAcessos : [],
-      pessoalTipos: Array.isArray(payload.pessoalTipos) ? payload.pessoalTipos : [],
-      pessoalCategorias: Array.isArray(payload.pessoalCategorias) ? payload.pessoalCategorias : [],
-      pessoalPagamentos: Array.isArray(payload.pessoalPagamentos) ? payload.pessoalPagamentos : [],
-      notificacoes: Array.isArray(payload.notificacoes) ? payload.notificacoes : [],
-      updatedAt: remoteAt || Date.now(),
-    };
-    state.lancamentos = state.lancamentos.map((l) => migrarVaquinha(l));
-    const pendenciasReparadas = normalizarPendenciasIds();
-    if (pendenciasReparadas) state.updatedAt = Date.now();
-    lastRemoteUpdatedAt = remoteAt || state.updatedAt;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    if (pendenciasReparadas) {
-      setTimeout(() => {
-        if (!applyingRemote) schedulePush();
-      }, 0);
-    }
+    try {
+      const grupos = normalizarGrupos(payload.grupos, payload.pesos);
+      state = {
+        lancamentos: Array.isArray(payload.lancamentos) ? payload.lancamentos : [],
+        grupos,
+        pesos: pesosFromGrupos(grupos),
+        meses: Array.isArray(payload.meses) ? payload.meses : [],
+        mesAtual: payload.mesAtual || null,
+        pessoas: Array.isArray(payload.pessoas) ? payload.pessoas : [],
+        tiposDespesa: normalizarTiposDespesa(payload.tiposDespesa),
+        pendencias: Array.isArray(payload.pendencias) ? payload.pendencias : [],
+        pessoais: Array.isArray(payload.pessoais) ? payload.pessoais : [],
+        pessoalAcessos: Array.isArray(payload.pessoalAcessos) ? payload.pessoalAcessos : [],
+        pessoalTipos: Array.isArray(payload.pessoalTipos) ? payload.pessoalTipos : [],
+        pessoalCategorias: Array.isArray(payload.pessoalCategorias) ? payload.pessoalCategorias : [],
+        pessoalPagamentos: Array.isArray(payload.pessoalPagamentos) ? payload.pessoalPagamentos : [],
+        notificacoes: Array.isArray(payload.notificacoes) ? payload.notificacoes : [],
+        updatedAt: remoteAt || Date.now(),
+      };
+      state.lancamentos = state.lancamentos.map((l) => migrarVaquinha(l));
+      const pendenciasReparadas = normalizarPendenciasIds();
+      if (pendenciasReparadas) state.updatedAt = Date.now();
+      lastRemoteUpdatedAt = remoteAt || state.updatedAt;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      if (pendenciasReparadas) {
+        setTimeout(() => {
+          if (!applyingRemote) schedulePush();
+        }, 0);
+      }
 
-    if (!mesSelecionado || !state.meses.some((m) => m.id === mesSelecionado)) {
-      mesSelecionado = state.mesAtual || state.meses[0]?.id || null;
-    }
+      if (!mesSelecionado || !state.meses.some((m) => m.id === mesSelecionado)) {
+        mesSelecionado = state.mesAtual || state.meses[0]?.id || null;
+      }
 
-    // Atualiza UI se já estiver logado
-    if (usuarioAtual() && !$("#app").classList.contains("hidden")) {
-      updateNotifBadge();
-      updateMesStatus();
-      fillFiltroMes();
-      renderRelatorio();
-      renderVaquinhaUI();
-      renderMercadoLista();
-      renderDespesaLista();
-      renderPendencias();
-      fillPendenciaPessoas();
-      renderPessoal();
-      renderLoginUI();
-      fillConfigForm();
-    } else {
-      renderLoginUI();
+      if (usuarioAtual() && !$("#app").classList.contains("hidden")) {
+        try {
+          updateNotifBadge();
+          updateMesStatus();
+          fillFiltroMes();
+          renderRelatorio();
+          renderVaquinhaUI();
+          renderMercadoLista();
+          renderDespesaLista();
+          renderPendencias();
+          fillPendenciaPessoas();
+          renderPessoal();
+          renderLoginUI();
+          fillConfigForm();
+        } catch (err) {
+          console.warn("Falha ao atualizar UI após sync:", err);
+        }
+      } else {
+        renderLoginUI();
+      }
+    } finally {
+      applyingRemote = false;
     }
-    applyingRemote = false;
   }
 
   function schedulePush() {
@@ -1552,8 +1558,8 @@
 
   function listaCadastroPessoal(chave, donoId) {
     return (state[chave] || [])
-      .filter((x) => x.donoId === donoId)
-      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+      .filter((x) => x && x.donoId === donoId && x.nome)
+      .sort((a, b) => String(a.nome).localeCompare(String(b.nome), "pt-BR"));
   }
 
   function ensurePessoalCadastros(donoId) {
@@ -1834,6 +1840,14 @@
   }
 
   function renderPessoal() {
+    try {
+      renderPessoalInner();
+    } catch (err) {
+      console.warn("renderPessoal:", err);
+    }
+  }
+
+  function renderPessoalInner() {
     const u = usuarioAtual();
     if (!u) return;
 
@@ -1841,7 +1855,7 @@
     fillPessoalMesSelect();
 
     const donoId = pessoalDonoId || u.id;
-    if (ensurePessoalCadastros(donoId)) saveState();
+    if (ensurePessoalCadastros(donoId) && !applyingRemote) saveState();
 
     const podeVer = podeVerPessoalDe(donoId);
     const podeEditar = podeEditarPessoalDe(donoId);
@@ -3498,9 +3512,8 @@
               if (!worker) return;
               worker.addEventListener("statechange", () => {
                 if (worker.state === "installed" && navigator.serviceWorker.controller) {
-                  toast("Nova versão disponível — recarregando…");
+                  toast("Nova versão disponível — atualizando…");
                   worker.postMessage("SKIP_WAITING");
-                  setTimeout(() => location.reload(), 800);
                 }
               });
             });
@@ -3511,9 +3524,14 @@
       let refreshing = false;
       navigator.serviceWorker.addEventListener("controllerchange", () => {
         if (refreshing) return;
+        if (sessionStorage.getItem("despesas-sw-reloaded") === "1") return;
         refreshing = true;
+        sessionStorage.setItem("despesas-sw-reloaded", "1");
         location.reload();
       });
+
+      // libera novo reload em aberturas futuras
+      setTimeout(() => sessionStorage.removeItem("despesas-sw-reloaded"), 4000);
     }
 
     window.addEventListener("online", () => {
@@ -3543,6 +3561,14 @@
 
   function init() {
     if (normalizarPendenciasIds()) saveState();
+    // Garante que nenhum modal ficou preso bloqueando toques
+    document.querySelectorAll("dialog[open]").forEach((d) => {
+      try {
+        d.close();
+      } catch (_) {
+        /* ignore */
+      }
+    });
     initLogin();
     initTabs();
     initForms();
