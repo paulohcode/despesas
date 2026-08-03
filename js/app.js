@@ -2695,11 +2695,10 @@
         }`;
         return `
       <article class="pessoal-linha ${isRec ? "pessoal-linha--receita" : ""}">
-        <p class="pessoal-linha__info">
-          <span class="pessoal-linha__data">${escapeHtml(dataCurta)}</span>
-          <span class="pessoal-linha__titulo">${escapeHtml(item.descricao)}</span>
-          <span class="pessoal-linha__meta">${escapeHtml(detalhes)}</span>
-        </p>
+        <div class="pessoal-linha__texto">
+          <p class="pessoal-linha__titulo">${escapeHtml(item.descricao)}</p>
+          <p class="pessoal-linha__meta">${escapeHtml(dataCurta)} · ${escapeHtml(detalhes)}</p>
+        </div>
         <p class="pessoal-linha__valor ${valorClass}">${sinal}${formatMoney(item.valor)}</p>
         ${acao}
       </article>`;

@@ -817,9 +817,9 @@ select {
 
 .pessoal-linha {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.4rem;
-  padding: 0.42rem 0.55rem;
+  padding: 0.5rem 0.55rem;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -831,47 +831,33 @@ select {
   background: color-mix(in srgb, var(--brand-soft) 40%, #fff);
 }
 
-.pessoal-linha__info {
+.pessoal-linha__texto {
   flex: 1;
   min-width: 0;
-  margin: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 0.35rem;
-  overflow: hidden;
-}
-
-.pessoal-linha__data {
-  flex-shrink: 0;
-  font-size: 0.68rem;
-  font-weight: 600;
-  color: var(--ink-muted);
 }
 
 .pessoal-linha__titulo {
-  flex: 0 1 auto;
-  min-width: 0;
-  font-size: 0.84rem;
+  margin: 0;
+  font-size: 0.88rem;
   font-weight: 650;
   color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.25;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .pessoal-linha__meta {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 0.65rem;
+  margin: 0.15rem 0 0;
+  font-size: 0.68rem;
   color: var(--ink-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.25;
+  word-break: break-word;
 }
 
 .pessoal-linha__valor {
   margin: 0;
   flex-shrink: 0;
+  padding-top: 0.05rem;
   font-family: var(--display);
   font-size: 0.88rem;
   font-weight: 700;
@@ -880,6 +866,7 @@ select {
 
 .pessoal-linha .btn--icon {
   flex-shrink: 0;
+  margin-top: 0.05rem;
   width: 1.6rem;
   height: 1.6rem;
   padding: 0;
