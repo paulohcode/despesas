@@ -266,7 +266,7 @@ select {
 .nav {
   display: flex;
   gap: 0.3rem;
-  padding: 0.35rem;
+  padding: 0.35rem 0.35rem 0.5rem;
   background: rgba(255, 252, 247, 0.72);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -276,11 +276,17 @@ select {
   z-index: 10;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(26, 92, 74, 0.35) transparent;
 }
 
 .nav::-webkit-scrollbar {
-  display: none;
+  height: 4px;
+}
+
+.nav::-webkit-scrollbar-thumb {
+  background: rgba(26, 92, 74, 0.35);
+  border-radius: 999px;
 }
 
 .nav__btn {
