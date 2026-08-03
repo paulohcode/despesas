@@ -16,7 +16,10 @@
   --shadow: 0 10px 30px rgba(28, 43, 38, 0.08);
   --font: "DM Sans", sans-serif;
   --display: "Fraunces", Georgia, serif;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 }
 
 *,
@@ -52,7 +55,11 @@ select {
   width: min(560px, 100%);
   margin: 0 auto;
   min-height: 100dvh;
-  padding: 1rem 0.85rem calc(1.25rem + var(--safe-bottom));
+  padding:
+    calc(1rem + var(--safe-top))
+    calc(0.85rem + var(--safe-right))
+    calc(1.25rem + var(--safe-bottom))
+    calc(0.85rem + var(--safe-left));
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
@@ -65,8 +72,10 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.25rem 0.15rem;
+  padding: 0.35rem 0.15rem 0.25rem;
   min-width: 0;
+  position: relative;
+  z-index: 5;
 }
 
 .header__brand {
@@ -1087,7 +1096,11 @@ select {
   min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: 1.25rem;
+  padding:
+    calc(1.25rem + var(--safe-top))
+    calc(1.25rem + var(--safe-right))
+    calc(1.25rem + var(--safe-bottom))
+    calc(1.25rem + var(--safe-left));
   background:
     radial-gradient(ellipse 80% 50% at 10% -10%, #d9ebe3 0%, transparent 55%),
     radial-gradient(ellipse 60% 40% at 100% 0%, #f0e0d2 0%, transparent 50%),
