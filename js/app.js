@@ -542,36 +542,13 @@
 
   function renderLoginUI() {
     const datalist = $("#lista-usuarios-login");
-    const rapidos = $("#usuarios-rapidos");
     if ($("#login-casa")) $("#login-casa").value = CASA_PADRAO;
     setSyncStatus(firebasePronto() ? (navigator.onLine ? "online" : "offline") : "local");
+    updateInstallHint();
 
     datalist.innerHTML = state.pessoas
       .map((p) => `<option value="${escapeHtml(p.nome)}"></option>`)
       .join("");
-
-    if (!state.pessoas.length) {
-      rapidos.innerHTML = "";
-      return;
-    }
-    rapidos.innerHTML =
-      `<p class="login__rapidos-label">Entrar como</p>` +
-      state.pessoas
-        .map(
-          (p) =>
-            `<button type="button" class="btn btn--ghost btn--sm btn-user-rapido" data-id="${p.id}">${escapeHtml(p.nome)}</button>`
-        )
-        .join("");
-
-    rapidos.querySelectorAll(".btn-user-rapido").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const casa = CASA_PADRAO;
-        const p = state.pessoas.find((x) => x.id === btn.dataset.id);
-        if (!p) return;
-        await startSync(casa);
-        entrarComo(p);
-      });
-    });
   }
 
   function initLogin() {
@@ -1626,24 +1603,84 @@
   }
 
   /* ---------- PWA ---------- */
+  function isIos() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent);
+  }
+
+  function isStandalone() {
+    return (
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true
+    );
+  }
+
+  function updateInstallHint() {
+    const hint = $("#install-hint");
+    const btnLogin = $("#btn-install-login");
+    const btnHeader = $("#btn-install");
+    if (!hint) return;
+
+    if (isStandalone()) {
+      hint.textContent = "App já instalado neste aparelho.";
+      btnLogin?.classList.add("hidden");
+      btnHeader?.classList.add("hidden");
+      return;
+    }
+
+    btnLogin?.classList.remove("hidden");
+    btnHeader?.classList.remove("hidden");
+
+    if (isIos()) {
+      hint.textContent = "No iPhone/iPad: toque em Compartilhar → Adicionar à Tela de Início.";
+    } else if (deferredInstallPrompt) {
+      hint.textContent = "Toque em Instalar para adicionar à tela inicial.";
+    } else {
+      hint.textContent =
+        "No Chrome/Edge: menu ⋮ → Instalar app (ou ícone de instalação na barra).";
+    }
+  }
+
+  async function tryInstall() {
+    if (isStandalone()) {
+      toast("App já está instalado.");
+      return;
+    }
+    if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      updateInstallHint();
+      if (choice.outcome === "accepted") toast("App instalado!");
+      return;
+    }
+    if (isIos()) {
+      toast("No iOS: Compartilhar → Adicionar à Tela de Início.");
+      return;
+    }
+    toast("Use o menu do navegador: Instalar app / Adicionar à tela inicial.");
+  }
+
   function initPWA() {
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").then((reg) => {
-          reg.update();
-          setInterval(() => reg.update(), 60 * 60 * 1000);
-          reg.addEventListener("updatefound", () => {
-            const worker = reg.installing;
-            if (!worker) return;
-            worker.addEventListener("statechange", () => {
-              if (worker.state === "installed" && navigator.serviceWorker.controller) {
-                toast("Nova versão disponível — recarregando…");
-                worker.postMessage("SKIP_WAITING");
-                setTimeout(() => location.reload(), 800);
-              }
+        navigator.serviceWorker
+          .register("./sw.js", { scope: "./" })
+          .then((reg) => {
+            reg.update();
+            setInterval(() => reg.update(), 60 * 60 * 1000);
+            reg.addEventListener("updatefound", () => {
+              const worker = reg.installing;
+              if (!worker) return;
+              worker.addEventListener("statechange", () => {
+                if (worker.state === "installed" && navigator.serviceWorker.controller) {
+                  toast("Nova versão disponível — recarregando…");
+                  worker.postMessage("SKIP_WAITING");
+                  setTimeout(() => location.reload(), 800);
+                }
+              });
             });
-          });
-        }).catch(() => {});
+          })
+          .catch((err) => console.warn("SW:", err));
       });
 
       let refreshing = false;
@@ -1665,15 +1702,18 @@
     window.addEventListener("beforeinstallprompt", (e) => {
       e.preventDefault();
       deferredInstallPrompt = e;
-      $("#btn-install").classList.remove("hidden");
+      updateInstallHint();
     });
-    $("#btn-install").addEventListener("click", async () => {
-      if (!deferredInstallPrompt) return;
-      deferredInstallPrompt.prompt();
-      await deferredInstallPrompt.userChoice;
+
+    window.addEventListener("appinstalled", () => {
       deferredInstallPrompt = null;
-      $("#btn-install").classList.add("hidden");
+      updateInstallHint();
+      toast("App instalado!");
     });
+
+    $("#btn-install")?.addEventListener("click", tryInstall);
+    $("#btn-install-login")?.addEventListener("click", tryInstall);
+    updateInstallHint();
   }
 
   function init() {
