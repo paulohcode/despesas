@@ -24,7 +24,7 @@
       <div class="login__brand">
         <span class="header__mark" aria-hidden="true"></span>
         <h1 class="login__title">Despesas</h1>
-        <p class="login__hint">Escolha seu usuário cadastrado. Somente o admin (Paulo) cadastra novas pessoas em Config.</p>
+        <p class="login__hint">Escolha seu usuário e informe a senha. Se ainda não tiver senha (ou o admin resetou), você define uma agora.</p>
       </div>
       <form id="form-login" class="form" autocomplete="off">
         <input type="hidden" id="login-casa" value="familia-silva" />
@@ -39,7 +39,22 @@
           <input type="text" id="login-nome-admin" placeholder="Nome do admin" autocomplete="username" />
           <span class="fieldset__hint">Ainda não há usuários. Entre com o nome do admin para cadastrar os demais.</span>
         </label>
-        <button type="submit" class="btn btn--primary btn--block">Entrar</button>
+        <label class="field hidden" id="login-campo-senha">
+          <span class="field__label">Senha</span>
+          <input type="password" id="login-senha" placeholder="Sua senha" autocomplete="current-password" />
+        </label>
+        <div id="login-definir-senha" class="login-definir-senha hidden">
+          <p class="fieldset__hint" id="login-definir-hint">Defina uma senha para o próximo acesso.</p>
+          <label class="field">
+            <span class="field__label">Nova senha</span>
+            <input type="password" id="login-senha-nova" placeholder="Mínimo 4 caracteres" autocomplete="new-password" />
+          </label>
+          <label class="field">
+            <span class="field__label">Confirmar senha</span>
+            <input type="password" id="login-senha-confirma" placeholder="Repita a senha" autocomplete="new-password" />
+          </label>
+        </div>
+        <button type="submit" class="btn btn--primary btn--block" id="btn-login-entrar">Entrar</button>
       </form>
       <p id="sync-login-status" class="login__sync detalhe"></p>
       <button type="button" id="btn-install-login" class="btn btn--secondary btn--block">Instalar no celular</button>
@@ -667,7 +682,7 @@
         <form id="form-pessoa" class="form hidden" style="margin-bottom:1.25rem" autocomplete="off">
           <fieldset class="fieldset">
             <legend class="fieldset__legend">Cadastro de usuários</legend>
-            <p class="fieldset__hint">Somente o admin pode cadastrar. Esses nomes aparecem no login, vaquinhas, entre nós e encontro.</p>
+            <p class="fieldset__hint">Somente o admin pode cadastrar. Use “Reset senha” para forçar o usuário a criar uma senha nova no próximo login.</p>
             <div class="row-add">
               <label class="field field--grow">
                 <span class="field__label">Nome</span>

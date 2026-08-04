@@ -1004,6 +1004,122 @@
     return u.nome.trim().toLowerCase() === ADMIN_NOME;
   }
 
+  function pessoaPrecisaDefinirSenha(pessoa) {
+    if (!pessoa) return true;
+    if (pessoa.precisaDefinirSenha) return true;
+    return !pessoa.senhaHash || !pessoa.senhaSalt;
+  }
+
+  function novoSaltSenha() {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function hashSenha(senha, salt) {
+    const enc = new TextEncoder();
+    const data = enc.encode(`${salt}:${senha}`);
+    const buf = await crypto.subtle.digest("SHA-256", data);
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function definirSenhaPessoa(pessoa, senha) {
+    const salt = novoSaltSenha();
+    const hash = await hashSenha(senha, salt);
+    pessoa.senhaSalt = salt;
+    pessoa.senhaHash = hash;
+    pessoa.precisaDefinirSenha = false;
+    pessoa.senhaAtualizadaEm = new Date().toISOString();
+  }
+
+  async function senhaConfere(pessoa, senha) {
+    if (!pessoa?.senhaHash || !pessoa?.senhaSalt) return false;
+    const hash = await hashSenha(senha, pessoa.senhaSalt);
+    return hash === pessoa.senhaHash;
+  }
+
+  function resetarSenhaPessoa(pessoa) {
+    if (!pessoa) return;
+    delete pessoa.senhaHash;
+    delete pessoa.senhaSalt;
+    pessoa.precisaDefinirSenha = true;
+    pessoa.senhaResetEm = new Date().toISOString();
+  }
+
+  function atualizarCamposSenhaLogin() {
+    const vazio = !state.pessoas.length;
+    const campoSenha = $("#login-campo-senha");
+    const blocoDefinir = $("#login-definir-senha");
+    const inputSenha = $("#login-senha");
+    const inputNova = $("#login-senha-nova");
+    const inputConf = $("#login-senha-confirma");
+    const hint = $("#login-definir-hint");
+    const btn = $("#btn-login-entrar");
+
+    if (vazio) {
+      // Primeiro admin: define senha junto
+      campoSenha?.classList.add("hidden");
+      blocoDefinir?.classList.remove("hidden");
+      if (hint) hint.textContent = "Defina a senha do admin neste primeiro acesso.";
+      if (inputSenha) {
+        inputSenha.value = "";
+        inputSenha.required = false;
+      }
+      if (inputNova) inputNova.required = true;
+      if (inputConf) inputConf.required = true;
+      if (btn) btn.textContent = "Criar admin e entrar";
+      return;
+    }
+
+    const id = $("#login-usuario")?.value || "";
+    const pessoa = state.pessoas.find((p) => p.id === id);
+    if (!pessoa) {
+      campoSenha?.classList.add("hidden");
+      blocoDefinir?.classList.add("hidden");
+      if (inputSenha) inputSenha.required = false;
+      if (inputNova) inputNova.required = false;
+      if (inputConf) inputConf.required = false;
+      if (btn) btn.textContent = "Entrar";
+      return;
+    }
+
+    const definir = pessoaPrecisaDefinirSenha(pessoa);
+    campoSenha?.classList.toggle("hidden", definir);
+    blocoDefinir?.classList.toggle("hidden", !definir);
+    if (hint) {
+      hint.textContent = pessoa.precisaDefinirSenha
+        ? "Sua senha foi resetada pelo admin. Escolha uma nova senha."
+        : "É o seu primeiro acesso. Defina uma senha para continuar.";
+    }
+    if (inputSenha) {
+      inputSenha.required = !definir;
+      if (definir) inputSenha.value = "";
+    }
+    if (inputNova) {
+      inputNova.required = definir;
+      if (!definir) inputNova.value = "";
+    }
+    if (inputConf) {
+      inputConf.required = definir;
+      if (!definir) inputConf.value = "";
+    }
+    if (btn) btn.textContent = definir ? "Salvar senha e entrar" : "Entrar";
+  }
+
+  function validarNovaSenhaDigitada() {
+    const nova = ($("#login-senha-nova")?.value || "").trim();
+    const conf = ($("#login-senha-confirma")?.value || "").trim();
+    if (nova.length < 4) {
+      toast("A senha deve ter pelo menos 4 caracteres.");
+      return null;
+    }
+    if (nova !== conf) {
+      toast("As senhas não coincidem.");
+      return null;
+    }
+    return nova;
+  }
+
   function autorMeta() {
     const u = usuarioAtual();
     return {
@@ -1737,7 +1853,7 @@
       .trim()
       .replace(/\s+/g, " ");
     if (!nome || nome.toLowerCase() !== ADMIN_NOME) return null;
-    const pessoa = { id: uid(), nome };
+    const pessoa = { id: uid(), nome, precisaDefinirSenha: true };
     state.pessoas.push(pessoa);
     saveState();
     return pessoa;
@@ -1789,8 +1905,13 @@
     if (sel) sel.value = "";
     const adminInput = $("#login-nome-admin");
     if (adminInput) adminInput.value = "";
+    ["#login-senha", "#login-senha-nova", "#login-senha-confirma"].forEach((s) => {
+      const el = $(s);
+      if (el) el.value = "";
+    });
     if (codigoCasa) $("#login-casa").value = CASA_PADRAO;
     setSyncStatus(firebasePronto() ? (navigator.onLine ? "offline" : "offline") : "local");
+    atualizarCamposSenhaLogin();
     (sel || $("#login-nome-admin"))?.focus();
   }
 
@@ -1814,14 +1935,26 @@
         `<option value="">Selecione…</option>` +
         [...state.pessoas]
           .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
-          .map((p) => `<option value="${p.id}">${escapeHtml(p.nome)}</option>`)
+          .map((p) => {
+            const tag = pessoaPrecisaDefinirSenha(p) ? " · definir senha" : "";
+            return `<option value="${p.id}">${escapeHtml(p.nome)}${tag}</option>`;
+          })
           .join("");
       if (prev && state.pessoas.some((p) => p.id === prev)) select.value = prev;
     }
     if (adminInput) adminInput.required = vazio;
+    atualizarCamposSenhaLogin();
   }
 
   function initLogin() {
+    $("#login-usuario")?.addEventListener("change", () => {
+      ["#login-senha", "#login-senha-nova", "#login-senha-confirma"].forEach((s) => {
+        const el = $(s);
+        if (el) el.value = "";
+      });
+      atualizarCamposSenhaLogin();
+    });
+
     $("#form-login").addEventListener("submit", async (e) => {
       e.preventDefault();
       const casa = CASA_PADRAO;
@@ -1831,21 +1964,50 @@
 
       await startSync(casa);
       renderLoginUI();
+      if (idAntes && $("#login-usuario") && state.pessoas.some((p) => p.id === idAntes)) {
+        $("#login-usuario").value = idAntes;
+        atualizarCamposSenhaLogin();
+      }
 
       let pessoa = null;
-      if (!state.pessoas.length) {
+      const primeiroAcesso = !state.pessoas.length;
+      if (primeiroAcesso) {
         pessoa = bootstrapAdminSeVazio(nomeAdmin);
         if (!pessoa) {
           return toast("Primeiro acesso: use o nome do admin (Paulo).");
         }
-      } else {
-        pessoa =
-          state.pessoas.find((p) => p.id === idAntes) ||
-          buscarPessoaCadastrada(nomeAntes);
-        if (!pessoa) {
-          return toast("Usuário não cadastrado. Peça ao admin para cadastrar em Config.");
-        }
+        const nova = validarNovaSenhaDigitada();
+        if (!nova) return;
+        await definirSenhaPessoa(pessoa, nova);
+        saveState();
+        schedulePush();
+        entrarComo(pessoa);
+        toast("Admin criado. Senha definida.");
+        return;
       }
+
+      pessoa =
+        state.pessoas.find((p) => p.id === ($("#login-usuario")?.value || idAntes)) ||
+        buscarPessoaCadastrada((nomeAntes || "").split("·")[0].trim());
+      if (!pessoa) {
+        return toast("Selecione seu usuário cadastrado para entrar.");
+      }
+
+      if (pessoaPrecisaDefinirSenha(pessoa)) {
+        const nova = validarNovaSenhaDigitada();
+        if (!nova) return;
+        await definirSenhaPessoa(pessoa, nova);
+        saveState();
+        schedulePush();
+        entrarComo(pessoa);
+        toast("Senha salva. Bem-vindo(a)!");
+        return;
+      }
+
+      const senha = ($("#login-senha")?.value || "").trim();
+      if (!senha) return toast("Informe sua senha.");
+      const ok = await senhaConfere(pessoa, senha);
+      if (!ok) return toast("Senha incorreta.");
 
       schedulePush();
       entrarComo(pessoa);
@@ -2569,7 +2731,7 @@
       if (state.pessoas.some((p) => p.nome.toLowerCase() === nome.toLowerCase())) {
         return toast("Esse usuário já está cadastrado.");
       }
-      state.pessoas.push({ id: uid(), nome });
+      state.pessoas.push({ id: uid(), nome, precisaDefinirSenha: true });
       state.pessoas.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
       saveState();
       e.target.reset();
@@ -5073,19 +5235,56 @@
       .map((p) => {
         const adminUser = p.nome.trim().toLowerCase() === ADMIN_NOME;
         const voce = p.id === usuarioAtualId;
-        const meta = [adminUser ? "admin" : null, voce ? "você" : null].filter(Boolean).join(" · ");
+        const semSenha = pessoaPrecisaDefinirSenha(p);
+        const meta = [
+          adminUser ? "admin" : null,
+          voce ? "você" : null,
+          semSenha ? "sem senha" : "com senha",
+        ]
+          .filter(Boolean)
+          .join(" · ");
         const podeRemover = isAdmin() && !adminUser && !voce;
+        const podeReset = isAdmin() && !semSenha;
         return `
       <li class="lista-pessoas__item">
         <span>${escapeHtml(p.nome)}${meta ? ` <span class="detalhe">(${meta})</span>` : ""}</span>
-        ${
-          podeRemover
-            ? `<button type="button" class="btn btn--icon btn-excluir-pessoa" data-id="${p.id}" title="Remover">×</button>`
-            : `<span class="badge badge--aberto">—</span>`
-        }
+        <span class="lista-pessoas__acoes">
+          ${
+            podeReset
+              ? `<button type="button" class="btn btn--ghost btn--sm btn-reset-senha" data-id="${p.id}" title="Resetar senha">Reset senha</button>`
+              : ""
+          }
+          ${
+            podeRemover
+              ? `<button type="button" class="btn btn--icon btn-excluir-pessoa" data-id="${p.id}" title="Remover">×</button>`
+              : !podeReset
+                ? `<span class="badge badge--aberto">${semSenha ? "definir" : "—"}</span>`
+                : ""
+          }
+        </span>
       </li>`;
       })
       .join("");
+
+    lista.querySelectorAll(".btn-reset-senha").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!isAdmin()) return toast("Somente o admin pode resetar senhas.");
+        const pessoa = state.pessoas.find((p) => p.id === btn.dataset.id);
+        if (!pessoa) return;
+        if (
+          !confirm(
+            `Resetar a senha de ${pessoa.nome}?\nNo próximo login a pessoa deverá criar uma senha nova.`
+          )
+        ) {
+          return;
+        }
+        resetarSenhaPessoa(pessoa);
+        saveState();
+        renderPessoasLista();
+        renderLoginUI();
+        toast(`Senha de ${pessoa.nome} resetada.`);
+      });
+    });
 
     lista.querySelectorAll(".btn-excluir-pessoa").forEach((btn) => {
       btn.addEventListener("click", () => {
