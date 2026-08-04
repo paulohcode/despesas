@@ -570,7 +570,7 @@ select {
   color: var(--ink-muted);
 }
 
-.field input,
+.field input:not([type="checkbox"]):not([type="radio"]),
 .field select,
 .field textarea {
   width: 100%;
@@ -602,7 +602,7 @@ select {
   padding-right: 2rem;
 }
 
-.field input:focus,
+.field input:not([type="checkbox"]):not([type="radio"]):focus,
 .field select:focus,
 .field textarea:focus {
   border-color: var(--brand);
@@ -892,8 +892,9 @@ select {
 
 .pessoal-linha {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
-  gap: 0.4rem;
+  gap: 0.35rem 0.5rem;
   padding: 0.5rem 0.55rem;
   background: var(--surface);
   border: 1px solid var(--line);
@@ -907,7 +908,7 @@ select {
 }
 
 .pessoal-linha__texto {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
 }
 
@@ -917,8 +918,8 @@ select {
   font-weight: 650;
   color: var(--ink);
   line-height: 1.25;
-  word-break: break-word;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .pessoal-linha__meta {
@@ -926,12 +927,13 @@ select {
   font-size: 0.68rem;
   color: var(--ink-muted);
   line-height: 1.25;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .pessoal-linha__valor {
   margin: 0;
-  flex-shrink: 0;
+  flex: 0 0 auto;
   padding-top: 0.05rem;
   font-family: var(--display);
   font-size: 0.88rem;
@@ -939,15 +941,38 @@ select {
   white-space: nowrap;
 }
 
+.pessoal-linha__acoes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+}
+
+/* Com botões de foto, ações vão para a linha de baixo e o texto não espreme */
+.pessoal-linha:has(.btn-ver-comprovante) .pessoal-linha__acoes,
+.pessoal-linha:has(.btn-add-comprovante) .pessoal-linha__acoes,
+.pessoal-linha:has(.btn-excluir-foto-comprovante) .pessoal-linha__acoes {
+  flex: 1 0 100%;
+  margin-top: 0.1rem;
+}
+
 .pessoal-linha .btn--icon,
 .pessoal-linha .btn--edit {
   flex-shrink: 0;
-  margin-top: 0.05rem;
   width: 1.6rem;
   height: 1.6rem;
   padding: 0;
   font-size: 0.95rem;
   line-height: 1;
+}
+
+.pessoal-linha .btn--sm {
+  flex-shrink: 0;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
 }
 
 .lista-fixas {
@@ -1312,13 +1337,22 @@ select {
   user-select: none;
   font-size: 0.95rem;
   color: var(--ink);
+  padding: 0.15rem 0;
 }
 
 .field--check input[type="checkbox"] {
-  width: 1.1rem;
-  height: 1.1rem;
-  accent-color: var(--brand, #2f6f5e);
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+  padding: 0;
   flex-shrink: 0;
+  border: 1.5px solid var(--line);
+  border-radius: 4px;
+  background: #fff;
+  accent-color: var(--brand, #2f6f5e);
+  -webkit-appearance: checkbox;
+  appearance: auto;
+  cursor: pointer;
 }
 
 .compras {
@@ -1814,7 +1848,6 @@ select {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.35rem;
-  flex-shrink: 0;
 }
 
 .btn--edit {

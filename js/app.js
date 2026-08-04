@@ -1328,18 +1328,21 @@
     const kind = opts.kind || "lancamento";
     const canAdd = !!opts.canAdd;
     const canRemove = !!opts.canRemove;
+    const compact = opts.compact !== false; // ícones na lista (economiza espaço)
     const parts = [];
     if (srcComprovante(item)) {
       parts.push(
         `<button type="button" class="btn btn--secondary btn--sm btn-ver-comprovante" data-id="${escapeHtml(
           item.id
-        )}" data-kind="${escapeHtml(kind)}" data-can-remove="${canRemove ? "1" : "0"}" title="Ver comprovante">📄 Ver</button>`
+        )}" data-kind="${escapeHtml(kind)}" data-can-remove="${canRemove ? "1" : "0"}" title="Ver comprovante">${
+          compact ? "📄" : "📄 Ver"
+        }</button>`
       );
       if (canRemove) {
         parts.push(
           `<button type="button" class="btn btn--ghost btn--sm btn-excluir-foto-comprovante" data-id="${escapeHtml(
             item.id
-          )}" data-kind="${escapeHtml(kind)}" title="Excluir foto">🗑 Foto</button>`
+          )}" data-kind="${escapeHtml(kind)}" title="Excluir foto">${compact ? "🗑" : "🗑 Foto"}</button>`
         );
       }
     } else if (canAdd) {
@@ -2065,6 +2068,7 @@
     limparCamposSenhaLogin();
     if (codigoCasa) $("#login-casa").value = CASA_PADRAO;
     setSyncStatus(firebasePronto() ? (navigator.onLine ? "offline" : "offline") : "local");
+    syncCheckboxManterConectado();
     atualizarCamposSenhaLogin();
     (sel || $("#login-nome-admin"))?.focus();
   }
@@ -2097,13 +2101,14 @@
       if (prev && state.pessoas.some((p) => p.id === prev)) select.value = prev;
     }
     if (adminInput) adminInput.required = vazio;
-    const manter = $("#login-manter-conectado");
-    if (manter && document.activeElement !== manter) {
-      // Prefere a última escolha salva; padrão: marcado
-      const flag = localStorage.getItem(REMEMBER_KEY);
-      manter.checked = flag !== "0";
-    }
     atualizarCamposSenhaLogin();
+  }
+
+  function syncCheckboxManterConectado() {
+    const manter = $("#login-manter-conectado");
+    if (!manter) return;
+    const flag = localStorage.getItem(REMEMBER_KEY);
+    manter.checked = flag !== "0";
   }
 
   function initLogin() {
