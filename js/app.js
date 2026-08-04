@@ -89,6 +89,7 @@
   const pendingComprovante = { mercado: null, despesa: null, pessoal: null }; // Blob|null
   const comprovanteExistente = { mercado: null, despesa: null, pessoal: null }; // {url,path,data}|null when editing
   const comprovanteRemovido = { mercado: false, despesa: false, pessoal: false };
+  let modalComprovanteCtx = null; // { id, kind, canRemove }
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -1096,13 +1097,21 @@
   function htmlBtnComprovante(item, opts = {}) {
     const kind = opts.kind || "lancamento";
     const canAdd = !!opts.canAdd;
+    const canRemove = !!opts.canRemove;
     const parts = [];
     if (srcComprovante(item)) {
       parts.push(
         `<button type="button" class="btn btn--secondary btn--sm btn-ver-comprovante" data-id="${escapeHtml(
           item.id
-        )}" data-kind="${escapeHtml(kind)}" title="Ver comprovante">📄 Ver</button>`
+        )}" data-kind="${escapeHtml(kind)}" data-can-remove="${canRemove ? "1" : "0"}" title="Ver comprovante">📄 Ver</button>`
       );
+      if (canRemove) {
+        parts.push(
+          `<button type="button" class="btn btn--ghost btn--sm btn-excluir-foto-comprovante" data-id="${escapeHtml(
+            item.id
+          )}" data-kind="${escapeHtml(kind)}" title="Excluir foto">🗑 Foto</button>`
+        );
+      }
     } else if (canAdd) {
       parts.push(
         `<button type="button" class="btn btn--secondary btn--sm btn--foto btn-add-comprovante" data-id="${escapeHtml(
@@ -1113,17 +1122,50 @@
     return parts.join("");
   }
 
-  function abrirComprovante(src) {
+  function abrirComprovante(src, ctx = null) {
     if (!src) return;
+    modalComprovanteCtx = ctx;
     const dialog = $("#modal-comprovante");
     const img = $("#modal-comprovante-img");
     const link = $("#modal-comprovante-abrir");
+    const btnExcluir = $("#btn-excluir-comprovante");
     if (img) img.src = src;
     if (link) {
       link.href = src;
       link.classList.toggle("hidden", src.startsWith("data:"));
     }
+    btnExcluir?.classList.toggle("hidden", !(ctx && ctx.canRemove && ctx.id));
     dialog?.showModal?.();
+  }
+
+  function podeRemoverComprovanteItem(item, kind) {
+    if (!item || !srcComprovante(item)) return false;
+    if (kind === "pessoal") return podeEditarPessoalDe(item.donoId);
+    return (
+      item.lancadoPorId === usuarioAtualId && mesEstaAberto(item.mesId)
+    );
+  }
+
+  function removerComprovanteDoItem(itemId, kind) {
+    const item = resolverItemComprovante(itemId, kind);
+    if (!item) return toast("Lançamento não encontrado.");
+    if (!podeRemoverComprovanteItem(item, kind)) {
+      return toast("Sem permissão para excluir esta foto.");
+    }
+    if (!confirm("Excluir a foto do comprovante?\nVocê poderá tirar outra depois.")) return;
+
+    if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
+    delete item.comprovanteUrl;
+    delete item.comprovantePath;
+    delete item.comprovanteData;
+    saveState();
+    $("#modal-comprovante")?.close?.();
+    modalComprovanteCtx = null;
+    renderMercadoLista();
+    renderDespesaLista();
+    renderPessoal();
+    renderRelatorio();
+    toast("Foto excluída. Use 📷 para tirar outra.");
   }
 
   function limparComprovanteCampo(kind, opts = {}) {
@@ -1205,7 +1247,19 @@
         const item = resolverItemComprovante(btn.dataset.id, btn.dataset.kind);
         const src = srcComprovante(item);
         if (!src) return toast("Comprovante não encontrado.");
-        abrirComprovante(src);
+        const canRemove =
+          btn.dataset.canRemove === "1" ||
+          podeRemoverComprovanteItem(item, btn.dataset.kind);
+        abrirComprovante(src, {
+          id: btn.dataset.id,
+          kind: btn.dataset.kind,
+          canRemove,
+        });
+      });
+    });
+    root.querySelectorAll(".btn-excluir-foto-comprovante").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        removerComprovanteDoItem(btn.dataset.id, btn.dataset.kind);
       });
     });
     root.querySelectorAll(".btn-add-comprovante").forEach((btn) => {
@@ -1287,6 +1341,11 @@
 
     $("#btn-fechar-comprovante")?.addEventListener("click", () => {
       $("#modal-comprovante")?.close?.();
+      modalComprovanteCtx = null;
+    });
+    $("#btn-excluir-comprovante")?.addEventListener("click", () => {
+      if (!modalComprovanteCtx?.id) return;
+      removerComprovanteDoItem(modalComprovanteCtx.id, modalComprovanteCtx.kind);
     });
   }
 
@@ -1968,6 +2027,7 @@
         const fotoBtn = htmlBtnComprovante(item, {
           kind: "lancamento",
           canAdd: !!(meu && podeExcluirMes && !srcComprovante(item)),
+          canRemove: !!(meu && podeExcluirMes && srcComprovante(item)),
         });
         if (fotoBtn) acoes.push(fotoBtn);
         if (meu && podeExcluirMes) {
@@ -2123,6 +2183,7 @@
         const fotoBtn = htmlBtnComprovante(item, {
           kind: "lancamento",
           canAdd: !!(meu && podeExcluirMes && !srcComprovante(item)),
+          canRemove: !!(meu && podeExcluirMes && srcComprovante(item)),
         });
         if (fotoBtn) acoes.push(fotoBtn);
         if (meu && podeExcluirMes) {
@@ -3643,6 +3704,7 @@
           const fotoBtn = htmlBtnComprovante(item, {
             kind: "pessoal",
             canAdd: !!(podeEditar && !srcComprovante(item)),
+            canRemove: !!(podeEditar && srcComprovante(item)),
           });
           if (fotoBtn) acoes.push(fotoBtn);
         }
