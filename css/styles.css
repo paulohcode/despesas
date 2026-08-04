@@ -1303,6 +1303,24 @@ select {
   display: none;
 }
 
+.field--check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.55rem;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+
+.field--check input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--brand, #2f6f5e);
+  flex-shrink: 0;
+}
+
 .compras {
   display: flex;
   flex-direction: column;
@@ -1816,6 +1834,34 @@ select {
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
+}
+
+.foto-origem-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(20, 16, 12, 0.45);
+}
+
+.foto-origem-sheet {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-radius: 16px 16px 12px 12px;
+  background: var(--surface, #fff);
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
+}
+
+.foto-origem-sheet__titulo {
+  margin: 0 0 0.35rem;
+  font-weight: 600;
+  text-align: center;
 }
 
 .comprovante-preview {

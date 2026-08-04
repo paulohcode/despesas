@@ -4,6 +4,7 @@
   const STORAGE_KEY = "despesas_domesticas_v1";
   const BACKUP_KEY = "despesas_domesticas_backup_v1";
   const SESSION_KEY = "despesas_usuario_atual";
+  const REMEMBER_KEY = "despesas_manter_conectado";
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
@@ -64,7 +65,7 @@
   };
 
   let state = loadState();
-  let usuarioAtualId = localStorage.getItem(SESSION_KEY) || null;
+  let usuarioAtualId = lerSessaoUsuarioId();
   let codigoCasa = localStorage.getItem(CASA_KEY) || CASA_PADRAO;
   let mesSelecionado = state.mesAtual || state.meses[0]?.id || null;
   let relatorioModo = "casa"; // casa | vaquinha | pendencias
@@ -93,6 +94,58 @@
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+  function lerSessaoUsuarioId() {
+    try {
+      const remember = localStorage.getItem(REMEMBER_KEY);
+      if (remember === "1") {
+        return localStorage.getItem(SESSION_KEY) || null;
+      }
+      if (remember === "0") {
+        return sessionStorage.getItem(SESSION_KEY) || null;
+      }
+      // Sessão antiga (antes da opção “manter conectado”)
+      const legacy = localStorage.getItem(SESSION_KEY);
+      if (legacy) {
+        localStorage.setItem(REMEMBER_KEY, "1");
+        return legacy;
+      }
+      return sessionStorage.getItem(SESSION_KEY) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function manterConectadoMarcado() {
+    const el = $("#login-manter-conectado");
+    return el ? !!el.checked : true;
+  }
+
+  function persistirSessao(pessoaId, manterConectado) {
+    try {
+      if (manterConectado) {
+        localStorage.setItem(SESSION_KEY, pessoaId);
+        localStorage.setItem(REMEMBER_KEY, "1");
+        sessionStorage.removeItem(SESSION_KEY);
+      } else {
+        localStorage.removeItem(SESSION_KEY);
+        localStorage.setItem(REMEMBER_KEY, "0");
+        sessionStorage.setItem(SESSION_KEY, pessoaId);
+      }
+    } catch (err) {
+      console.warn(err);
+    }
+  }
+
+  function limparSessaoPersistida() {
+    try {
+      localStorage.removeItem(SESSION_KEY);
+      localStorage.removeItem(REMEMBER_KEY);
+      sessionStorage.removeItem(SESSION_KEY);
+    } catch (_) {
+      /* ignore */
+    }
+  }
 
   function loadState() {
     try {
@@ -498,6 +551,11 @@
 
       if (usuarioAtual() && !$("#app").classList.contains("hidden")) {
         try {
+          const eu = usuarioAtual();
+          if (eu && pessoaPrecisaDefinirSenha(eu)) {
+            forcarTelaLoginParaDefinirSenha(eu);
+            return;
+          }
           updateNotifBadge();
           updateMesStatus();
           fillFiltroMes();
@@ -1006,7 +1064,7 @@
 
   function pessoaPrecisaDefinirSenha(pessoa) {
     if (!pessoa) return true;
-    if (pessoa.precisaDefinirSenha) return true;
+    if (pessoa.precisaDefinirSenha === true) return true;
     return !pessoa.senhaHash || !pessoa.senhaSalt;
   }
 
@@ -1017,6 +1075,9 @@
   }
 
   async function hashSenha(senha, salt) {
+    if (!crypto?.subtle?.digest) {
+      throw new Error("Este navegador/ambiente não permite criptografar senha. Abra o app em HTTPS.");
+    }
     const enc = new TextEncoder();
     const data = enc.encode(`${salt}:${senha}`);
     const buf = await crypto.subtle.digest("SHA-256", data);
@@ -1046,69 +1107,67 @@
     pessoa.senhaResetEm = new Date().toISOString();
   }
 
+  function limparCamposSenhaLogin() {
+    ["#login-senha", "#login-senha-confirma"].forEach((s) => {
+      const el = $(s);
+      if (el) el.value = "";
+    });
+  }
+
   function atualizarCamposSenhaLogin() {
     const vazio = !state.pessoas.length;
     const campoSenha = $("#login-campo-senha");
-    const blocoDefinir = $("#login-definir-senha");
-    const inputSenha = $("#login-senha");
-    const inputNova = $("#login-senha-nova");
-    const inputConf = $("#login-senha-confirma");
+    const campoConfirma = $("#login-campo-confirma");
     const hint = $("#login-definir-hint");
+    const labelSenha = $("#login-senha-label");
+    const inputSenha = $("#login-senha");
     const btn = $("#btn-login-entrar");
 
+    // Sempre mostra usuário/senha na tela inicial (quando já há cadastros)
+    campoSenha?.classList.remove("hidden");
+
     if (vazio) {
-      // Primeiro admin: define senha junto
-      campoSenha?.classList.add("hidden");
-      blocoDefinir?.classList.remove("hidden");
-      if (hint) hint.textContent = "Defina a senha do admin neste primeiro acesso.";
+      campoConfirma?.classList.remove("hidden");
+      hint?.classList.remove("hidden");
+      if (hint) hint.textContent = "Defina a senha do admin neste primeiro acesso (mín. 4 caracteres).";
+      if (labelSenha) labelSenha.textContent = "Nova senha";
       if (inputSenha) {
-        inputSenha.value = "";
-        inputSenha.required = false;
+        inputSenha.placeholder = "Mínimo 4 caracteres";
+        inputSenha.autocomplete = "new-password";
       }
-      if (inputNova) inputNova.required = true;
-      if (inputConf) inputConf.required = true;
       if (btn) btn.textContent = "Criar admin e entrar";
       return;
     }
 
     const id = $("#login-usuario")?.value || "";
     const pessoa = state.pessoas.find((p) => p.id === id);
-    if (!pessoa) {
-      campoSenha?.classList.add("hidden");
-      blocoDefinir?.classList.add("hidden");
-      if (inputSenha) inputSenha.required = false;
-      if (inputNova) inputNova.required = false;
-      if (inputConf) inputConf.required = false;
-      if (btn) btn.textContent = "Entrar";
-      return;
-    }
+    const definir = !!(pessoa && pessoaPrecisaDefinirSenha(pessoa));
 
-    const definir = pessoaPrecisaDefinirSenha(pessoa);
-    campoSenha?.classList.toggle("hidden", definir);
-    blocoDefinir?.classList.toggle("hidden", !definir);
+    campoConfirma?.classList.toggle("hidden", !definir);
+    hint?.classList.toggle("hidden", !definir);
     if (hint) {
-      hint.textContent = pessoa.precisaDefinirSenha
-        ? "Sua senha foi resetada pelo admin. Escolha uma nova senha."
-        : "É o seu primeiro acesso. Defina uma senha para continuar.";
+      hint.textContent = pessoa?.precisaDefinirSenha
+        ? "Sua senha foi resetada. Digite a nova senha e confirme."
+        : "Primeiro acesso: digite a nova senha e confirme.";
     }
+    if (labelSenha) labelSenha.textContent = definir ? "Nova senha" : "Senha";
     if (inputSenha) {
-      inputSenha.required = !definir;
-      if (definir) inputSenha.value = "";
+      inputSenha.placeholder = definir ? "Mínimo 4 caracteres" : "Sua senha";
+      inputSenha.autocomplete = definir ? "new-password" : "current-password";
     }
-    if (inputNova) {
-      inputNova.required = definir;
-      if (!definir) inputNova.value = "";
+    if (!definir) {
+      const conf = $("#login-senha-confirma");
+      if (conf) conf.value = "";
     }
-    if (inputConf) {
-      inputConf.required = definir;
-      if (!definir) inputConf.value = "";
+    if (btn) {
+      if (!pessoa) btn.textContent = "Entrar";
+      else btn.textContent = definir ? "Salvar senha e entrar" : "Entrar";
     }
-    if (btn) btn.textContent = definir ? "Salvar senha e entrar" : "Entrar";
   }
 
-  function validarNovaSenhaDigitada() {
-    const nova = ($("#login-senha-nova")?.value || "").trim();
-    const conf = ($("#login-senha-confirma")?.value || "").trim();
+  function validarNovaSenhaDigitada(novaEl, confEl) {
+    const nova = (novaEl?.value || $("#login-senha")?.value || "").trim();
+    const conf = (confEl?.value || $("#login-senha-confirma")?.value || "").trim();
     if (nova.length < 4) {
       toast("A senha deve ter pelo menos 4 caracteres.");
       return null;
@@ -1118,6 +1177,61 @@
       return null;
     }
     return nova;
+  }
+
+  let definirSenhaCtxId = null;
+
+  function abrirModalDefinirSenha(pessoaId) {
+    const pessoa = state.pessoas.find((p) => p.id === pessoaId);
+    if (!pessoa) return toast("Usuário não encontrado.");
+    const souEu = pessoa.id === usuarioAtualId;
+    if (!souEu && !isAdmin()) return toast("Sem permissão.");
+    definirSenhaCtxId = pessoa.id;
+    const titulo = $("#modal-definir-senha-titulo");
+    const texto = $("#modal-definir-senha-texto");
+    if (titulo) titulo.textContent = souEu ? "Definir minha senha" : `Definir senha — ${pessoa.nome}`;
+    if (texto) {
+      texto.textContent = souEu
+        ? "Escolha uma senha com pelo menos 4 caracteres para proteger seu acesso."
+        : `Defina uma senha inicial para ${pessoa.nome}. A pessoa poderá trocá-la depois.`;
+    }
+    const nova = $("#modal-senha-nova");
+    const conf = $("#modal-senha-confirma");
+    if (nova) nova.value = "";
+    if (conf) conf.value = "";
+    const modal = $("#modal-definir-senha");
+    if (modal?.showModal) modal.showModal();
+    else modal?.setAttribute("open", "");
+    setTimeout(() => nova?.focus(), 50);
+  }
+
+  function fecharModalDefinirSenha() {
+    definirSenhaCtxId = null;
+    const modal = $("#modal-definir-senha");
+    try {
+      modal?.close?.();
+    } catch (_) {
+      modal?.removeAttribute("open");
+    }
+  }
+
+  function forcarTelaLoginParaDefinirSenha(pessoa) {
+    usuarioAtualId = null;
+    limparSessaoPersistida();
+    $("#app")?.classList.add("hidden");
+    $("#tela-login")?.classList.remove("hidden");
+    renderLoginUI();
+    const sel = $("#login-usuario");
+    if (sel && pessoa?.id) {
+      sel.value = pessoa.id;
+      limparCamposSenhaLogin();
+      atualizarCamposSenhaLogin();
+    }
+    toast(
+      pessoa?.nome
+        ? `${pessoa.nome}, defina sua senha para continuar.`
+        : "Defina sua senha para continuar."
+    );
   }
 
   function autorMeta() {
@@ -1383,7 +1497,44 @@
     });
   }
 
-  function anexarComprovanteExistente(itemId, kind) {
+  function escolherOrigemFoto() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "foto-origem-overlay";
+      overlay.innerHTML = `
+        <div class="foto-origem-sheet" role="dialog" aria-label="Origem da foto">
+          <p class="foto-origem-sheet__titulo">Como deseja anexar?</p>
+          <button type="button" class="btn btn--secondary" data-origem="camera">📷 Câmera</button>
+          <button type="button" class="btn btn--secondary" data-origem="galeria">🖼 Galeria</button>
+          <button type="button" class="btn btn--ghost" data-origem="">Cancelar</button>
+        </div>`;
+      const fechar = (origem) => {
+        overlay.remove();
+        resolve(origem || null);
+      };
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) fechar(null);
+      });
+      overlay.querySelectorAll("[data-origem]").forEach((btn) => {
+        btn.addEventListener("click", () => fechar(btn.dataset.origem || null));
+      });
+      document.body.appendChild(overlay);
+    });
+  }
+
+  function abrirSeletorFoto(usarCamera) {
+    return new Promise((resolve) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/*";
+      if (usarCamera) input.capture = "environment";
+      input.addEventListener("change", () => resolve(input.files?.[0] || null));
+      input.addEventListener("cancel", () => resolve(null));
+      input.click();
+    });
+  }
+
+  async function anexarComprovanteExistente(itemId, kind) {
     const item = resolverItemComprovante(itemId, kind);
     if (!item) return toast("Lançamento não encontrado.");
     if (kind === "pessoal") {
@@ -1392,47 +1543,44 @@
       if (item.lancadoPorId !== usuarioAtualId) return toast("Só quem lançou pode anexar.");
       if (!mesEstaAberto(item.mesId)) return toast("Só é possível anexar no mês aberto.");
     }
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.capture = "environment";
-    input.addEventListener("change", async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      try {
-        toast("Enviando foto…");
-        const blob = await compressImageFile(file);
-        const result = await uploadComprovante(blob, item.id);
-        if (result.url) {
-          item.comprovanteUrl = result.url;
-          item.comprovantePath = result.path;
-          delete item.comprovanteData;
-        } else if (result.data) {
-          item.comprovanteData = result.data;
-          delete item.comprovanteUrl;
-          delete item.comprovantePath;
-        }
-        saveState();
-        if (kind === "pessoal") renderPessoal();
-        else if (item.tipo === "mercado") renderMercadoLista();
-        else renderDespesaLista();
-        toast("Foto anexada.");
-      } catch (err) {
-        console.warn(err);
-        toast("Não foi possível anexar a foto.");
+    const origem = await escolherOrigemFoto();
+    if (!origem) return;
+    const file = await abrirSeletorFoto(origem === "camera");
+    if (!file) return;
+    try {
+      toast("Enviando foto…");
+      const blob = await compressImageFile(file);
+      const result = await uploadComprovante(blob, item.id);
+      if (result.url) {
+        item.comprovanteUrl = result.url;
+        item.comprovantePath = result.path;
+        delete item.comprovanteData;
+      } else if (result.data) {
+        item.comprovanteData = result.data;
+        delete item.comprovanteUrl;
+        delete item.comprovantePath;
       }
-    });
-    input.click();
+      saveState();
+      if (kind === "pessoal") renderPessoal();
+      else if (item.tipo === "mercado") renderMercadoLista();
+      else renderDespesaLista();
+      toast("Foto anexada.");
+    } catch (err) {
+      console.warn(err);
+      toast("Não foi possível anexar a foto.");
+    }
   }
 
   function initComprovanteCampos() {
     ["mercado", "despesa", "pessoal"].forEach((kind) => {
-      const btn = $(`#${kind}-foto-btn`);
-      const file = $(`#${kind}-foto`);
+      const btnCam = $(`#${kind}-foto-camera`);
+      const btnGal = $(`#${kind}-foto-galeria`);
+      const fileCam = $(`#${kind}-foto-cam`);
+      const fileGal = $(`#${kind}-foto`);
       const limpar = $(`#${kind}-foto-limpar`);
-      btn?.addEventListener("click", () => file?.click());
-      file?.addEventListener("change", async () => {
-        const chosen = file.files?.[0];
+
+      const processarArquivo = async (fileEl) => {
+        const chosen = fileEl.files?.[0];
         if (!chosen) return;
         try {
           toast("Processando foto…");
@@ -1446,9 +1594,14 @@
           pendingComprovante[kind] = null;
           toast("Não foi possível processar a imagem.");
         } finally {
-          file.value = "";
+          fileEl.value = "";
         }
-      });
+      };
+
+      btnCam?.addEventListener("click", () => fileCam?.click());
+      btnGal?.addEventListener("click", () => fileGal?.click());
+      fileCam?.addEventListener("change", () => processarArquivo(fileCam));
+      fileGal?.addEventListener("change", () => processarArquivo(fileGal));
       limpar?.addEventListener("click", () => {
         limparComprovanteCampo(kind, { marcarRemovido: true });
         toast("Foto removida do formulário.");
@@ -1859,9 +2012,13 @@
     return pessoa;
   }
 
-  function entrarComo(pessoa) {
+  function entrarComo(pessoa, opcoes = {}) {
+    const manter =
+      typeof opcoes.manterConectado === "boolean"
+        ? opcoes.manterConectado
+        : localStorage.getItem(REMEMBER_KEY) === "1";
     usuarioAtualId = pessoa.id;
-    localStorage.setItem(SESSION_KEY, pessoa.id);
+    persistirSessao(pessoa.id, manter);
     $("#tela-login").classList.add("hidden");
     $("#app").classList.remove("hidden");
     $("#nome-usuario").textContent = pessoa.nome;
@@ -1895,7 +2052,7 @@
   function sair() {
     stopSync();
     usuarioAtualId = null;
-    localStorage.removeItem(SESSION_KEY);
+    limparSessaoPersistida();
     $("#app").classList.add("hidden");
     $("#tela-login").classList.remove("hidden");
     fecharModalAtivarPush();
@@ -1905,10 +2062,7 @@
     if (sel) sel.value = "";
     const adminInput = $("#login-nome-admin");
     if (adminInput) adminInput.value = "";
-    ["#login-senha", "#login-senha-nova", "#login-senha-confirma"].forEach((s) => {
-      const el = $(s);
-      if (el) el.value = "";
-    });
+    limparCamposSenhaLogin();
     if (codigoCasa) $("#login-casa").value = CASA_PADRAO;
     setSyncStatus(firebasePronto() ? (navigator.onLine ? "offline" : "offline") : "local");
     atualizarCamposSenhaLogin();
@@ -1943,15 +2097,18 @@
       if (prev && state.pessoas.some((p) => p.id === prev)) select.value = prev;
     }
     if (adminInput) adminInput.required = vazio;
+    const manter = $("#login-manter-conectado");
+    if (manter && document.activeElement !== manter) {
+      // Prefere a última escolha salva; padrão: marcado
+      const flag = localStorage.getItem(REMEMBER_KEY);
+      manter.checked = flag !== "0";
+    }
     atualizarCamposSenhaLogin();
   }
 
   function initLogin() {
     $("#login-usuario")?.addEventListener("change", () => {
-      ["#login-senha", "#login-senha-nova", "#login-senha-confirma"].forEach((s) => {
-        const el = $(s);
-        if (el) el.value = "";
-      });
+      limparCamposSenhaLogin();
       atualizarCamposSenhaLogin();
     });
 
@@ -1961,6 +2118,9 @@
       const idAntes = $("#login-usuario")?.value || "";
       const nomeAntes = $("#login-usuario")?.selectedOptions?.[0]?.textContent?.trim() || "";
       const nomeAdmin = $("#login-nome-admin")?.value || "";
+      const senhaAntes = ($("#login-senha")?.value || "").trim();
+      const senhaConfAntes = ($("#login-senha-confirma")?.value || "").trim();
+      const manterAntes = manterConectadoMarcado();
 
       await startSync(casa);
       renderLoginUI();
@@ -1968,50 +2128,83 @@
         $("#login-usuario").value = idAntes;
         atualizarCamposSenhaLogin();
       }
+      if ($("#login-senha")) $("#login-senha").value = senhaAntes;
+      if ($("#login-senha-confirma")) $("#login-senha-confirma").value = senhaConfAntes;
+      if ($("#login-manter-conectado")) $("#login-manter-conectado").checked = manterAntes;
 
+      const opLogin = { manterConectado: manterAntes };
       let pessoa = null;
       const primeiroAcesso = !state.pessoas.length;
-      if (primeiroAcesso) {
-        pessoa = bootstrapAdminSeVazio(nomeAdmin);
-        if (!pessoa) {
-          return toast("Primeiro acesso: use o nome do admin (Paulo).");
+      try {
+        if (primeiroAcesso) {
+          pessoa = bootstrapAdminSeVazio(nomeAdmin);
+          if (!pessoa) {
+            return toast("Primeiro acesso: use o nome do admin (Paulo).");
+          }
+          const nova = validarNovaSenhaDigitada();
+          if (!nova) return;
+          await definirSenhaPessoa(pessoa, nova);
+          saveState();
+          schedulePush();
+          entrarComo(pessoa, opLogin);
+          toast("Admin criado. Senha definida.");
+          return;
         }
-        const nova = validarNovaSenhaDigitada();
-        if (!nova) return;
-        await definirSenhaPessoa(pessoa, nova);
-        saveState();
+
+        pessoa =
+          state.pessoas.find((p) => p.id === ($("#login-usuario")?.value || idAntes)) ||
+          buscarPessoaCadastrada((nomeAntes || "").split("·")[0].trim());
+        if (!pessoa) {
+          return toast("Selecione seu usuário cadastrado para entrar.");
+        }
+
+        if (pessoaPrecisaDefinirSenha(pessoa)) {
+          const nova = validarNovaSenhaDigitada();
+          if (!nova) return;
+          await definirSenhaPessoa(pessoa, nova);
+          saveState();
+          schedulePush();
+          entrarComo(pessoa, opLogin);
+          toast("Senha salva. Bem-vindo(a)!");
+          return;
+        }
+
+        const senha = ($("#login-senha")?.value || "").trim();
+        if (!senha) return toast("Informe sua senha.");
+        const ok = await senhaConfere(pessoa, senha);
+        if (!ok) return toast("Senha incorreta.");
+
         schedulePush();
-        entrarComo(pessoa);
-        toast("Admin criado. Senha definida.");
-        return;
+        entrarComo(pessoa, opLogin);
+      } catch (err) {
+        console.warn(err);
+        toast(err?.message || "Não foi possível validar a senha.");
       }
-
-      pessoa =
-        state.pessoas.find((p) => p.id === ($("#login-usuario")?.value || idAntes)) ||
-        buscarPessoaCadastrada((nomeAntes || "").split("·")[0].trim());
-      if (!pessoa) {
-        return toast("Selecione seu usuário cadastrado para entrar.");
-      }
-
-      if (pessoaPrecisaDefinirSenha(pessoa)) {
-        const nova = validarNovaSenhaDigitada();
-        if (!nova) return;
-        await definirSenhaPessoa(pessoa, nova);
-        saveState();
-        schedulePush();
-        entrarComo(pessoa);
-        toast("Senha salva. Bem-vindo(a)!");
-        return;
-      }
-
-      const senha = ($("#login-senha")?.value || "").trim();
-      if (!senha) return toast("Informe sua senha.");
-      const ok = await senhaConfere(pessoa, senha);
-      if (!ok) return toast("Senha incorreta.");
-
-      schedulePush();
-      entrarComo(pessoa);
     });
+
+    $("#form-definir-senha")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const pessoa = state.pessoas.find((p) => p.id === definirSenhaCtxId);
+      if (!pessoa) {
+        fecharModalDefinirSenha();
+        return toast("Usuário não encontrado.");
+      }
+      const nova = validarNovaSenhaDigitada($("#modal-senha-nova"), $("#modal-senha-confirma"));
+      if (!nova) return;
+      try {
+        await definirSenhaPessoa(pessoa, nova);
+        saveState();
+        fecharModalDefinirSenha();
+        renderPessoasLista();
+        renderLoginUI();
+        toast(`Senha de ${pessoa.nome} salva.`);
+      } catch (err) {
+        console.warn(err);
+        toast(err?.message || "Não foi possível salvar a senha.");
+      }
+    });
+    $("#btn-cancelar-definir-senha")?.addEventListener("click", () => fecharModalDefinirSenha());
+
     $("#btn-sair").addEventListener("click", sair);
   }
 
@@ -5245,10 +5438,16 @@
           .join(" · ");
         const podeRemover = isAdmin() && !adminUser && !voce;
         const podeReset = isAdmin() && !semSenha;
+        const podeDefinir = semSenha && (voce || isAdmin());
         return `
       <li class="lista-pessoas__item">
         <span>${escapeHtml(p.nome)}${meta ? ` <span class="detalhe">(${meta})</span>` : ""}</span>
         <span class="lista-pessoas__acoes">
+          ${
+            podeDefinir
+              ? `<button type="button" class="btn btn--secondary btn--sm btn-definir-senha" data-id="${p.id}" title="Definir senha">Definir senha</button>`
+              : ""
+          }
           ${
             podeReset
               ? `<button type="button" class="btn btn--ghost btn--sm btn-reset-senha" data-id="${p.id}" title="Resetar senha">Reset senha</button>`
@@ -5257,14 +5456,16 @@
           ${
             podeRemover
               ? `<button type="button" class="btn btn--icon btn-excluir-pessoa" data-id="${p.id}" title="Remover">×</button>`
-              : !podeReset
-                ? `<span class="badge badge--aberto">${semSenha ? "definir" : "—"}</span>`
-                : ""
+              : ""
           }
         </span>
       </li>`;
       })
       .join("");
+
+    lista.querySelectorAll(".btn-definir-senha").forEach((btn) => {
+      btn.addEventListener("click", () => abrirModalDefinirSenha(btn.dataset.id));
+    });
 
     lista.querySelectorAll(".btn-reset-senha").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -5283,6 +5484,9 @@
         renderPessoasLista();
         renderLoginUI();
         toast(`Senha de ${pessoa.nome} resetada.`);
+        if (pessoa.id === usuarioAtualId) {
+          forcarTelaLoginParaDefinirSenha(pessoa);
+        }
       });
     });
 
@@ -6429,24 +6633,24 @@
       pushToCloud();
     });
 
-    const salvo = usuarioAtualId && state.pessoas.find((p) => p.id === usuarioAtualId);
+    const salvoId = lerSessaoUsuarioId();
     const boot = async () => {
       salvarBackupLocal("boot");
       if (codigoCasa) await startSync(codigoCasa);
-      if (salvo) {
-        const atualizado =
-          state.pessoas.find((p) => p.id === usuarioAtualId) ||
-          state.pessoas.find((p) => p.nome.toLowerCase() === salvo.nome.toLowerCase());
-        if (atualizado) entrarComo(atualizado);
-        else {
+      if (salvoId) {
+        const atualizado = state.pessoas.find((p) => p.id === salvoId);
+        if (atualizado && pessoaPrecisaDefinirSenha(atualizado)) {
+          forcarTelaLoginParaDefinirSenha(atualizado);
+        } else if (atualizado) {
+          entrarComo(atualizado);
+        } else {
           usuarioAtualId = null;
-          localStorage.removeItem(SESSION_KEY);
+          limparSessaoPersistida();
           $("#tela-login").classList.remove("hidden");
           $("#app").classList.add("hidden");
         }
       } else {
         usuarioAtualId = null;
-        localStorage.removeItem(SESSION_KEY);
         $("#tela-login").classList.remove("hidden");
         $("#app").classList.add("hidden");
       }

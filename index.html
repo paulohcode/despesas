@@ -24,12 +24,12 @@
       <div class="login__brand">
         <span class="header__mark" aria-hidden="true"></span>
         <h1 class="login__title">Despesas</h1>
-        <p class="login__hint">Escolha seu usuário e informe a senha. Se ainda não tiver senha (ou o admin resetou), você define uma agora.</p>
+        <p class="login__hint">Informe usuário e senha para entrar. Marque “Manter conectado” se quiser continuar logado neste aparelho.</p>
       </div>
       <form id="form-login" class="form" autocomplete="off">
         <input type="hidden" id="login-casa" value="familia-silva" />
         <label class="field" id="login-campo-usuario">
-          <span class="field__label">Seu usuário</span>
+          <span class="field__label">Usuário</span>
           <select id="login-usuario" required>
             <option value="">Selecione…</option>
           </select>
@@ -39,21 +39,19 @@
           <input type="text" id="login-nome-admin" placeholder="Nome do admin" autocomplete="username" />
           <span class="fieldset__hint">Ainda não há usuários. Entre com o nome do admin para cadastrar os demais.</span>
         </label>
-        <label class="field hidden" id="login-campo-senha">
-          <span class="field__label">Senha</span>
+        <label class="field" id="login-campo-senha">
+          <span class="field__label" id="login-senha-label">Senha</span>
           <input type="password" id="login-senha" placeholder="Sua senha" autocomplete="current-password" />
         </label>
-        <div id="login-definir-senha" class="login-definir-senha hidden">
-          <p class="fieldset__hint" id="login-definir-hint">Defina uma senha para o próximo acesso.</p>
-          <label class="field">
-            <span class="field__label">Nova senha</span>
-            <input type="password" id="login-senha-nova" placeholder="Mínimo 4 caracteres" autocomplete="new-password" />
-          </label>
-          <label class="field">
-            <span class="field__label">Confirmar senha</span>
-            <input type="password" id="login-senha-confirma" placeholder="Repita a senha" autocomplete="new-password" />
-          </label>
-        </div>
+        <label class="field hidden" id="login-campo-confirma">
+          <span class="field__label">Confirmar senha</span>
+          <input type="password" id="login-senha-confirma" placeholder="Repita a senha" autocomplete="new-password" />
+        </label>
+        <p class="fieldset__hint hidden" id="login-definir-hint">É o seu primeiro acesso. Defina uma senha e confirme abaixo.</p>
+        <label class="field field--check" id="login-campo-manter">
+          <input type="checkbox" id="login-manter-conectado" checked />
+          <span>Manter conectado</span>
+        </label>
         <button type="submit" class="btn btn--primary btn--block" id="btn-login-entrar">Entrar</button>
       </form>
       <p id="sync-login-status" class="login__sync detalhe"></p>
@@ -142,10 +140,12 @@
           <div class="field comprovante-field">
             <span class="field__label">Comprovante / notinha (opcional)</span>
             <div class="comprovante-field__row">
-              <button type="button" class="btn btn--secondary btn--sm" id="mercado-foto-btn">📷 Tirar ou anexar foto</button>
+              <button type="button" class="btn btn--secondary btn--sm" id="mercado-foto-camera">📷 Câmera</button>
+              <button type="button" class="btn btn--secondary btn--sm" id="mercado-foto-galeria">🖼 Galeria</button>
               <button type="button" class="btn btn--ghost btn--sm hidden" id="mercado-foto-limpar">Remover</button>
             </div>
-            <input type="file" id="mercado-foto" class="hidden" accept="image/*" capture="environment" />
+            <input type="file" id="mercado-foto-cam" class="hidden" accept="image/*" capture="environment" />
+            <input type="file" id="mercado-foto" class="hidden" accept="image/*" />
             <div id="mercado-foto-preview" class="comprovante-preview hidden">
               <img alt="Prévia do comprovante" />
             </div>
@@ -210,10 +210,12 @@
           <div class="field comprovante-field">
             <span class="field__label">Comprovante / notinha (opcional)</span>
             <div class="comprovante-field__row">
-              <button type="button" class="btn btn--secondary btn--sm" id="despesa-foto-btn">📷 Tirar ou anexar foto</button>
+              <button type="button" class="btn btn--secondary btn--sm" id="despesa-foto-camera">📷 Câmera</button>
+              <button type="button" class="btn btn--secondary btn--sm" id="despesa-foto-galeria">🖼 Galeria</button>
               <button type="button" class="btn btn--ghost btn--sm hidden" id="despesa-foto-limpar">Remover</button>
             </div>
-            <input type="file" id="despesa-foto" class="hidden" accept="image/*" capture="environment" />
+            <input type="file" id="despesa-foto-cam" class="hidden" accept="image/*" capture="environment" />
+            <input type="file" id="despesa-foto" class="hidden" accept="image/*" />
             <div id="despesa-foto-preview" class="comprovante-preview hidden">
               <img alt="Prévia do comprovante" />
             </div>
@@ -374,10 +376,12 @@
             <div class="field comprovante-field">
               <span class="field__label">Comprovante / notinha (opcional)</span>
               <div class="comprovante-field__row">
-                <button type="button" class="btn btn--secondary btn--sm" id="pessoal-foto-btn">📷 Tirar ou anexar foto</button>
+                <button type="button" class="btn btn--secondary btn--sm" id="pessoal-foto-camera">📷 Câmera</button>
+                <button type="button" class="btn btn--secondary btn--sm" id="pessoal-foto-galeria">🖼 Galeria</button>
                 <button type="button" class="btn btn--ghost btn--sm hidden" id="pessoal-foto-limpar">Remover</button>
               </div>
-              <input type="file" id="pessoal-foto" class="hidden" accept="image/*" capture="environment" />
+              <input type="file" id="pessoal-foto-cam" class="hidden" accept="image/*" capture="environment" />
+              <input type="file" id="pessoal-foto" class="hidden" accept="image/*" />
               <div id="pessoal-foto-preview" class="comprovante-preview hidden">
                 <img alt="Prévia do comprovante" />
               </div>
@@ -682,7 +686,7 @@
         <form id="form-pessoa" class="form hidden" style="margin-bottom:1.25rem" autocomplete="off">
           <fieldset class="fieldset">
             <legend class="fieldset__legend">Cadastro de usuários</legend>
-            <p class="fieldset__hint">Somente o admin pode cadastrar. Use “Reset senha” para forçar o usuário a criar uma senha nova no próximo login.</p>
+            <p class="fieldset__hint">Somente o admin pode cadastrar. Quem está sem senha vê o botão “Definir senha”. Use “Reset senha” para forçar nova senha no próximo login.</p>
             <div class="row-add">
               <label class="field field--grow">
                 <span class="field__label">Nome</span>
@@ -811,6 +815,28 @@
         <button type="button" id="btn-excluir-comprovante" class="btn btn--danger btn--block hidden">Excluir foto</button>
         <button type="button" id="btn-fechar-comprovante" class="btn btn--primary btn--block">Fechar</button>
       </div>
+    </div>
+  </dialog>
+
+  <!-- Definir / trocar senha (logado) -->
+  <dialog id="modal-definir-senha" class="modal">
+    <div class="modal__box">
+      <h3 class="modal__title" id="modal-definir-senha-titulo">Definir senha</h3>
+      <p class="modal__text" id="modal-definir-senha-texto">Escolha uma senha com pelo menos 4 caracteres.</p>
+      <form id="form-definir-senha" class="form" autocomplete="off">
+        <label class="field">
+          <span class="field__label">Nova senha</span>
+          <input type="password" id="modal-senha-nova" placeholder="Mínimo 4 caracteres" autocomplete="new-password" />
+        </label>
+        <label class="field">
+          <span class="field__label">Confirmar senha</span>
+          <input type="password" id="modal-senha-confirma" placeholder="Repita a senha" autocomplete="new-password" />
+        </label>
+        <div class="modal__actions modal__actions--stack">
+          <button type="submit" class="btn btn--primary btn--block" id="btn-salvar-definir-senha">Salvar senha</button>
+          <button type="button" class="btn btn--ghost btn--block" id="btn-cancelar-definir-senha">Cancelar</button>
+        </div>
+      </form>
     </div>
   </dialog>
 
