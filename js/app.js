@@ -86,6 +86,9 @@
   let pushTimer = null;
   let lastRemoteUpdatedAt = 0;
   let syncStatus = "offline"; // offline | syncing | online | error | local
+  const pendingComprovante = { mercado: null, despesa: null, pessoal: null }; // Blob|null
+  const comprovanteExistente = { mercado: null, despesa: null, pessoal: null }; // {url,path,data}|null when editing
+  const comprovanteRemovido = { mercado: false, despesa: false, pessoal: false };
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -1016,6 +1019,277 @@
     toastTimer = setTimeout(() => el.classList.remove("is-visible"), 2800);
   }
 
+  /* ---------- Comprovantes (foto) ---------- */
+  function storagePronto() {
+    try {
+      return !!(firebasePronto() && window.firebase?.storage);
+    } catch {
+      return false;
+    }
+  }
+
+  function blobToDataURL(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || new Error("Falha ao ler imagem"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function compressImageFile(file, maxSide = 1280, quality = 0.72) {
+    const bitmap = await createImageBitmap(file);
+    try {
+      const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+      const w = Math.max(1, Math.round(bitmap.width * scale));
+      const h = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error("Falha ao comprimir imagem"))),
+          "image/jpeg",
+          quality
+        );
+      });
+      return blob;
+    } finally {
+      bitmap.close?.();
+    }
+  }
+
+  async function uploadComprovante(blob, itemId) {
+    const path = `casas/${codigoCasa}/comprovantes/${itemId}_${Date.now()}.jpg`;
+    if (storagePronto() && navigator.onLine && codigoCasa) {
+      try {
+        if (!firebase.apps.length) {
+          firebase.initializeApp(window.FIREBASE_CONFIG);
+        }
+        const ref = firebase.storage().ref(path);
+        await ref.put(blob, { contentType: "image/jpeg" });
+        const url = await ref.getDownloadURL();
+        return { url, path };
+      } catch (err) {
+        console.warn("Upload Storage falhou, usando dataURL:", err);
+      }
+    }
+    let dataUrl = await blobToDataURL(blob);
+    if (dataUrl.length > 450_000) {
+      const harder = await compressImageFile(blob, 960, 0.55);
+      dataUrl = await blobToDataURL(harder);
+    }
+    if (dataUrl.length > 450_000) {
+      const harder = await compressImageFile(blob, 720, 0.45);
+      dataUrl = await blobToDataURL(harder);
+    }
+    return { data: dataUrl };
+  }
+
+  function srcComprovante(item) {
+    if (!item) return "";
+    return item.comprovanteUrl || item.comprovanteData || "";
+  }
+
+  function htmlBtnComprovante(item, opts = {}) {
+    const kind = opts.kind || "lancamento";
+    const canAdd = !!opts.canAdd;
+    const parts = [];
+    if (srcComprovante(item)) {
+      parts.push(
+        `<button type="button" class="btn btn--secondary btn--sm btn-ver-comprovante" data-id="${escapeHtml(
+          item.id
+        )}" data-kind="${escapeHtml(kind)}" title="Ver comprovante">📄 Ver</button>`
+      );
+    } else if (canAdd) {
+      parts.push(
+        `<button type="button" class="btn btn--secondary btn--sm btn--foto btn-add-comprovante" data-id="${escapeHtml(
+          item.id
+        )}" data-kind="${escapeHtml(kind)}" title="Anexar foto">📷</button>`
+      );
+    }
+    return parts.join("");
+  }
+
+  function abrirComprovante(src) {
+    if (!src) return;
+    const dialog = $("#modal-comprovante");
+    const img = $("#modal-comprovante-img");
+    const link = $("#modal-comprovante-abrir");
+    if (img) img.src = src;
+    if (link) {
+      link.href = src;
+      link.classList.toggle("hidden", src.startsWith("data:"));
+    }
+    dialog?.showModal?.();
+  }
+
+  function limparComprovanteCampo(kind, opts = {}) {
+    const marcarRemovido = !!opts.marcarRemovido;
+    pendingComprovante[kind] = null;
+    comprovanteExistente[kind] = null;
+    comprovanteRemovido[kind] = marcarRemovido;
+    const file = $(`#${kind}-foto`);
+    if (file) file.value = "";
+    const preview = $(`#${kind}-foto-preview`);
+    const img = preview?.querySelector("img");
+    if (img) img.removeAttribute("src");
+    preview?.classList.add("hidden");
+    $(`#${kind}-foto-limpar`)?.classList.add("hidden");
+  }
+
+  function mostrarPreviewComprovante(kind, src) {
+    const preview = $(`#${kind}-foto-preview`);
+    const img = preview?.querySelector("img");
+    if (!preview || !img || !src) return;
+    img.src = src;
+    preview.classList.remove("hidden");
+    $(`#${kind}-foto-limpar`)?.classList.remove("hidden");
+  }
+
+  async function aplicarComprovanteNoItem(item, kind) {
+    if (!item) return;
+    if (pendingComprovante[kind]) {
+      toast("Enviando foto…");
+      const oldPath = item.comprovantePath || null;
+      const result = await uploadComprovante(pendingComprovante[kind], item.id);
+      if (result.url) {
+        item.comprovanteUrl = result.url;
+        item.comprovantePath = result.path;
+        delete item.comprovanteData;
+      } else if (result.data) {
+        item.comprovanteData = result.data;
+        delete item.comprovanteUrl;
+        delete item.comprovantePath;
+      }
+      if (oldPath && oldPath !== item.comprovantePath) {
+        excluirComprovanteStorage(oldPath);
+      }
+      return;
+    }
+    if (comprovanteRemovido[kind]) {
+      if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
+      delete item.comprovanteUrl;
+      delete item.comprovantePath;
+      delete item.comprovanteData;
+      return;
+    }
+    // Mantém comprovanteExistente / campos já no item
+  }
+
+  function excluirComprovanteStorage(path) {
+    if (!path || !storagePronto()) return;
+    try {
+      if (!firebase.apps.length) {
+        firebase.initializeApp(window.FIREBASE_CONFIG);
+      }
+      firebase.storage().ref(path).delete().catch(() => {});
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  function resolverItemComprovante(id, kind) {
+    if (kind === "pessoal") {
+      return (state.pessoais || []).find((p) => p.id === id) || null;
+    }
+    return state.lancamentos.find((l) => l.id === id) || null;
+  }
+
+  function wireComprovanteListEvents(root) {
+    if (!root) return;
+    root.querySelectorAll(".btn-ver-comprovante").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const item = resolverItemComprovante(btn.dataset.id, btn.dataset.kind);
+        const src = srcComprovante(item);
+        if (!src) return toast("Comprovante não encontrado.");
+        abrirComprovante(src);
+      });
+    });
+    root.querySelectorAll(".btn-add-comprovante").forEach((btn) => {
+      btn.addEventListener("click", () => anexarComprovanteExistente(btn.dataset.id, btn.dataset.kind));
+    });
+  }
+
+  function anexarComprovanteExistente(itemId, kind) {
+    const item = resolverItemComprovante(itemId, kind);
+    if (!item) return toast("Lançamento não encontrado.");
+    if (kind === "pessoal") {
+      if (!podeEditarPessoalDe(item.donoId)) return toast("Sem permissão.");
+    } else {
+      if (item.lancadoPorId !== usuarioAtualId) return toast("Só quem lançou pode anexar.");
+      if (!mesEstaAberto(item.mesId)) return toast("Só é possível anexar no mês aberto.");
+    }
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.capture = "environment";
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        toast("Enviando foto…");
+        const blob = await compressImageFile(file);
+        const result = await uploadComprovante(blob, item.id);
+        if (result.url) {
+          item.comprovanteUrl = result.url;
+          item.comprovantePath = result.path;
+          delete item.comprovanteData;
+        } else if (result.data) {
+          item.comprovanteData = result.data;
+          delete item.comprovanteUrl;
+          delete item.comprovantePath;
+        }
+        saveState();
+        if (kind === "pessoal") renderPessoal();
+        else if (item.tipo === "mercado") renderMercadoLista();
+        else renderDespesaLista();
+        toast("Foto anexada.");
+      } catch (err) {
+        console.warn(err);
+        toast("Não foi possível anexar a foto.");
+      }
+    });
+    input.click();
+  }
+
+  function initComprovanteCampos() {
+    ["mercado", "despesa", "pessoal"].forEach((kind) => {
+      const btn = $(`#${kind}-foto-btn`);
+      const file = $(`#${kind}-foto`);
+      const limpar = $(`#${kind}-foto-limpar`);
+      btn?.addEventListener("click", () => file?.click());
+      file?.addEventListener("change", async () => {
+        const chosen = file.files?.[0];
+        if (!chosen) return;
+        try {
+          toast("Processando foto…");
+          const blob = await compressImageFile(chosen);
+          pendingComprovante[kind] = blob;
+          comprovanteRemovido[kind] = false;
+          const previewUrl = URL.createObjectURL(blob);
+          mostrarPreviewComprovante(kind, previewUrl);
+        } catch (err) {
+          console.warn(err);
+          pendingComprovante[kind] = null;
+          toast("Não foi possível processar a imagem.");
+        } finally {
+          file.value = "";
+        }
+      });
+      limpar?.addEventListener("click", () => {
+        limparComprovanteCampo(kind, { marcarRemovido: true });
+        toast("Foto removida do formulário.");
+      });
+    });
+
+    $("#btn-fechar-comprovante")?.addEventListener("click", () => {
+      $("#modal-comprovante")?.close?.();
+    });
+  }
+
   /* ---------- Notificações ---------- */
   const PUSH_SEEN_KEY = "despesas_push_seen_v1";
   const PUSH_PROMPT_DISMISS_KEY = "despesas_push_prompt_dismiss_v1";
@@ -1691,6 +1965,11 @@
       .map((item) => {
         const meu = item.lancadoPorId && item.lancadoPorId === usuarioAtualId;
         const acoes = [];
+        const fotoBtn = htmlBtnComprovante(item, {
+          kind: "lancamento",
+          canAdd: !!(meu && podeExcluirMes && !srcComprovante(item)),
+        });
+        if (fotoBtn) acoes.push(fotoBtn);
         if (meu && podeExcluirMes) {
           acoes.push(
             `<button type="button" class="btn btn--edit btn--sm btn-editar-mercado" data-id="${item.id}" title="Editar">✎</button>`
@@ -1714,6 +1993,8 @@
       })
       .join("");
 
+    wireComprovanteListEvents(box);
+
     box.querySelectorAll(".btn-editar-mercado").forEach((btn) => {
       btn.addEventListener("click", () => iniciarEdicaoMercado(btn.dataset.id));
     });
@@ -1730,6 +2011,7 @@
         }
         if (!confirm(`Excluir mercado de ${formatMoney(item.valor)} (${formatDate(item.data)})?`)) return;
 
+        if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
         const autor = autorMeta();
         state.lancamentos = state.lancamentos.filter((l) => l.id !== item.id);
         notificarTodosExceto(autor.lancadoPorId, {
@@ -1749,6 +2031,7 @@
 
   function limparEdicaoMercado() {
     editingMercadoId = null;
+    limparComprovanteCampo("mercado");
     const form = $("#form-mercado");
     form?.reset();
     if ($("#mercado-data")) $("#mercado-data").value = todayISO();
@@ -1768,11 +2051,22 @@
     if (item.lancadoPorId !== usuarioAtualId) return toast("Só quem lançou pode editar.");
     if (!mesEstaAberto(item.mesId)) return toast("Só é possível editar no mês aberto.");
     editingMercadoId = item.id;
+    limparComprovanteCampo("mercado");
     fillSelectCompradores();
     $("#mercado-data").value = item.data || todayISO();
     $("#mercado-comprador").value = item.comprador || "";
     $("#mercado-pagamento").value = item.pagamento || "pix";
     setMoneyInput("#mercado-valor", item.valor);
+    const src = srcComprovante(item);
+    if (src) {
+      comprovanteExistente.mercado = {
+        url: item.comprovanteUrl || null,
+        path: item.comprovantePath || null,
+        data: item.comprovanteData || null,
+      };
+      comprovanteRemovido.mercado = false;
+      mostrarPreviewComprovante("mercado", src);
+    }
     setEditModeButtons(
       "#btn-salvar-mercado",
       "#btn-cancelar-mercado",
@@ -1826,6 +2120,11 @@
       .map((item) => {
         const meu = item.lancadoPorId && item.lancadoPorId === usuarioAtualId;
         const acoes = [];
+        const fotoBtn = htmlBtnComprovante(item, {
+          kind: "lancamento",
+          canAdd: !!(meu && podeExcluirMes && !srcComprovante(item)),
+        });
+        if (fotoBtn) acoes.push(fotoBtn);
         if (meu && podeExcluirMes) {
           acoes.push(
             `<button type="button" class="btn btn--edit btn--sm btn-editar-despesa" data-id="${item.id}" title="Editar">✎</button>`
@@ -1852,6 +2151,8 @@
       })
       .join("");
 
+    wireComprovanteListEvents(box);
+
     box.querySelectorAll(".btn-editar-despesa").forEach((btn) => {
       btn.addEventListener("click", () => iniciarEdicaoDespesa(btn.dataset.id));
     });
@@ -1868,6 +2169,7 @@
         }
         if (!confirm(`Excluir "${item.descricao}" de ${formatMoney(item.valor)}?`)) return;
 
+        if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
         const autor = autorMeta();
         state.lancamentos = state.lancamentos.filter((l) => l.id !== item.id);
         notificarTodosExceto(autor.lancadoPorId, {
@@ -1887,6 +2189,7 @@
 
   function limparEdicaoDespesa() {
     editingDespesaId = null;
+    limparComprovanteCampo("despesa");
     const form = $("#form-despesa");
     form?.reset();
     if ($("#despesa-data")) $("#despesa-data").value = todayISO();
@@ -1907,6 +2210,7 @@
     if (item.lancadoPorId !== usuarioAtualId) return toast("Só quem lançou pode editar.");
     if (!mesEstaAberto(item.mesId)) return toast("Só é possível editar no mês aberto.");
     editingDespesaId = item.id;
+    limparComprovanteCampo("despesa");
     fillSelectTiposDespesa(item.descricao || "");
     fillSelectCompradores();
     $("#despesa-descricao").value = item.descricao || "";
@@ -1915,6 +2219,16 @@
     $("#despesa-pagamento").value = item.pagamento || "pix";
     $("#despesa-criterio").value = item.criterio === "igual_3" ? "igual_3" : "proporcional";
     setMoneyInput("#despesa-valor", item.valor);
+    const src = srcComprovante(item);
+    if (src) {
+      comprovanteExistente.despesa = {
+        url: item.comprovanteUrl || null,
+        path: item.comprovantePath || null,
+        data: item.comprovanteData || null,
+      };
+      comprovanteRemovido.despesa = false;
+      mostrarPreviewComprovante("despesa", src);
+    }
     setEditModeButtons(
       "#btn-salvar-despesa",
       "#btn-cancelar-despesa",
@@ -1957,8 +2271,9 @@
     $("#vaquinha-data").value = todayISO();
     $("#pendencia-data").value = todayISO();
     bindMoneyInputs();
+    initComprovanteCampos();
 
-    $("#form-mercado").addEventListener("submit", (e) => {
+    $("#form-mercado").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!mesAberto()) return toast("Abra um mês antes de lançar.");
       const data = $("#mercado-data").value;
@@ -1991,6 +2306,12 @@
         existente.valor = valor;
         existente.criterio = "proporcional";
         existente.divisao = divisao;
+        try {
+          await aplicarComprovanteNoItem(existente, "mercado");
+        } catch (err) {
+          console.warn(err);
+          return toast("Não foi possível enviar a foto.");
+        }
         notificarTodosExceto(autor.lancadoPorId, {
           titulo: "Mercado editado",
           texto: `${autor.lancadoPorNome} editou um mercado para ${formatMoney(valor)} (${formatDate(data)}).`,
@@ -2020,6 +2341,12 @@
         ...autor,
         criadoEm: new Date().toISOString(),
       };
+      try {
+        await aplicarComprovanteNoItem(item, "mercado");
+      } catch (err) {
+        console.warn(err);
+        return toast("Não foi possível enviar a foto.");
+      }
       state.lancamentos.push(item);
       notificarTodosExceto(autor.lancadoPorId, {
         titulo: "Novo mercado",
@@ -2030,6 +2357,7 @@
       saveState();
       updateNotifBadge();
       e.target.reset();
+      limparComprovanteCampo("mercado");
       $("#mercado-data").value = todayISO();
       fillSelectCompradores();
       renderMercadoLista();
@@ -2065,7 +2393,7 @@
       toast(`"${nome}" cadastrada.`);
     });
 
-    $("#form-despesa").addEventListener("submit", (e) => {
+    $("#form-despesa").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!mesAberto()) return toast("Abra um mês antes de lançar.");
       if (!state.tiposDespesa.length) return toast("Cadastre ao menos um tipo de despesa.");
@@ -2107,6 +2435,12 @@
         existente.criterio = criterio;
         existente.valor = valor;
         existente.divisao = divisao;
+        try {
+          await aplicarComprovanteNoItem(existente, "despesa");
+        } catch (err) {
+          console.warn(err);
+          return toast("Não foi possível enviar a foto.");
+        }
         notificarTodosExceto(autor.lancadoPorId, {
           titulo: "Despesa editada",
           texto: `${autor.lancadoPorNome} editou "${descricao}" para ${formatMoney(valor)}.`,
@@ -2137,6 +2471,12 @@
         ...autor,
         criadoEm: new Date().toISOString(),
       };
+      try {
+        await aplicarComprovanteNoItem(item, "despesa");
+      } catch (err) {
+        console.warn(err);
+        return toast("Não foi possível enviar a foto.");
+      }
       state.lancamentos.push(item);
       notificarTodosExceto(autor.lancadoPorId, {
         titulo: "Nova despesa",
@@ -2147,6 +2487,7 @@
       saveState();
       updateNotifBadge();
       e.target.reset();
+      limparComprovanteCampo("despesa");
       $("#despesa-data").value = todayISO();
       fillSelectTiposDespesa();
       fillSelectCompradores();
@@ -3298,6 +3639,13 @@
         const pag = labelPagamentoPessoal(item);
         const cat = isRec ? "" : ` · ${labelCategoriaPessoal(item)}`;
         const acoes = [];
+        if (!isRec) {
+          const fotoBtn = htmlBtnComprovante(item, {
+            kind: "pessoal",
+            canAdd: !!(podeEditar && !srcComprovante(item)),
+          });
+          if (fotoBtn) acoes.push(fotoBtn);
+        }
         if (podeEditar) {
           acoes.push(
             `<button type="button" class="btn btn--edit btn--sm ${
@@ -3328,6 +3676,8 @@
       })
       .join("");
 
+    wireComprovanteListEvents(box);
+
     box.querySelectorAll(".btn-editar-pessoal").forEach((btn) => {
       btn.addEventListener("click", () => iniciarEdicaoPessoal(btn.dataset.id));
     });
@@ -3342,6 +3692,7 @@
           return toast("Sem permissão para excluir nesta lista.");
         }
         if (!confirm(`Excluir despesa "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
+        if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
         const autor = usuarioAtual();
         state.pessoais = state.pessoais.filter((p) => p.id !== item.id);
         const outros = idsParticipantesPessoal(item.donoId, autor?.id);
@@ -3390,6 +3741,7 @@
 
   function limparEdicaoPessoal() {
     editingPessoalId = null;
+    limparComprovanteCampo("pessoal");
     const form = $("#form-pessoal");
     form?.reset();
     if ($("#pessoal-data")) $("#pessoal-data").value = todayISO();
@@ -3427,6 +3779,7 @@
     editingReceitaId = null;
     limparEdicaoReceita();
     editingPessoalId = item.id;
+    limparComprovanteCampo("pessoal");
     pessoalDonoId = item.donoId;
     fillPessoalListaSelect();
     fillPessoalSelectsCadastro(item.donoId);
@@ -3436,6 +3789,16 @@
     $("#pessoal-categoria").value = item.categoriaId || "";
     $("#pessoal-pagamento").value = item.pagamentoId || "";
     setMoneyInput("#pessoal-valor", item.valor);
+    const src = srcComprovante(item);
+    if (src) {
+      comprovanteExistente.pessoal = {
+        url: item.comprovanteUrl || null,
+        path: item.comprovantePath || null,
+        data: item.comprovanteData || null,
+      };
+      comprovanteRemovido.pessoal = false;
+      mostrarPreviewComprovante("pessoal", src);
+    }
     setEditModeButtons(
       "#btn-salvar-pessoal",
       "#btn-cancelar-pessoal",
@@ -3599,7 +3962,7 @@
       }
     );
 
-    $("#form-pessoal")?.addEventListener("submit", (e) => {
+    $("#form-pessoal")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const u = usuarioAtual();
       if (!u) return toast("Faça login.");
@@ -3650,6 +4013,12 @@
           return toast("Despesa não encontrada ou sem permissão.");
         }
         Object.assign(existente, campos);
+        try {
+          await aplicarComprovanteNoItem(existente, "pessoal");
+        } catch (err) {
+          console.warn(err);
+          return toast("Não foi possível enviar a foto.");
+        }
         const outros = idsParticipantesPessoal(existente.donoId, u.id);
         if (outros.length) {
           notificar({
@@ -3679,6 +4048,12 @@
         criadoPorNome: u.nome,
         criadoEm: new Date().toISOString(),
       };
+      try {
+        await aplicarComprovanteNoItem(item, "pessoal");
+      } catch (err) {
+        console.warn(err);
+        return toast("Não foi possível enviar a foto.");
+      }
       if (!Array.isArray(state.pessoais)) state.pessoais = [];
       state.pessoais.unshift(item);
 
@@ -3696,6 +4071,7 @@
       saveState();
       updateNotifBadge();
       e.target.reset();
+      limparComprovanteCampo("pessoal");
       $("#pessoal-data").value = todayISO();
       pessoalDonoId = dono.id;
       pessoalMesId = data.slice(0, 7);

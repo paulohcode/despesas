@@ -12,6 +12,16 @@
  *     }
  *   }
  * }
+ *
+ * Storage (Storage → Regras) — fotos de comprovante:
+ * rules_version = '2';
+ * service firebase.storage {
+ *   match /b/{bucket}/o {
+ *     match /casas/{casa}/comprovantes/{allPaths=**} {
+ *       allow read, write: if true;
+ *     }
+ *   }
+ * }
  */
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyBqqRe2xqSWQSKhR7lxFO4Wzs8vqIBomr0",

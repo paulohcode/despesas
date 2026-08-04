@@ -124,6 +124,17 @@
             <span class="field__label">Valor total (R$)</span>
             <input type="text" class="input-money" id="mercado-valor" name="valor" inputmode="numeric" placeholder="0,00" required />
           </label>
+          <div class="field comprovante-field">
+            <span class="field__label">Comprovante / notinha (opcional)</span>
+            <div class="comprovante-field__row">
+              <button type="button" class="btn btn--secondary btn--sm" id="mercado-foto-btn">📷 Tirar ou anexar foto</button>
+              <button type="button" class="btn btn--ghost btn--sm hidden" id="mercado-foto-limpar">Remover</button>
+            </div>
+            <input type="file" id="mercado-foto" class="hidden" accept="image/*" capture="environment" />
+            <div id="mercado-foto-preview" class="comprovante-preview hidden">
+              <img alt="Prévia do comprovante" />
+            </div>
+          </div>
           <button type="submit" class="btn btn--primary btn--block" id="btn-salvar-mercado">Salvar mercado</button>
           <button type="button" class="btn btn--ghost btn--block hidden" id="btn-cancelar-mercado">Cancelar edição</button>
         </form>
@@ -181,6 +192,17 @@
             <span class="field__label">Valor total (R$)</span>
             <input type="text" class="input-money" id="despesa-valor" name="valor" inputmode="numeric" placeholder="0,00" required />
           </label>
+          <div class="field comprovante-field">
+            <span class="field__label">Comprovante / notinha (opcional)</span>
+            <div class="comprovante-field__row">
+              <button type="button" class="btn btn--secondary btn--sm" id="despesa-foto-btn">📷 Tirar ou anexar foto</button>
+              <button type="button" class="btn btn--ghost btn--sm hidden" id="despesa-foto-limpar">Remover</button>
+            </div>
+            <input type="file" id="despesa-foto" class="hidden" accept="image/*" capture="environment" />
+            <div id="despesa-foto-preview" class="comprovante-preview hidden">
+              <img alt="Prévia do comprovante" />
+            </div>
+          </div>
           <button type="submit" class="btn btn--primary btn--block" id="btn-salvar-despesa">Salvar despesa</button>
           <button type="button" class="btn btn--ghost btn--block hidden" id="btn-cancelar-despesa">Cancelar edição</button>
         </form>
@@ -334,6 +356,17 @@
               <span class="field__label">Valor (R$)</span>
                 <input type="text" class="input-money" id="pessoal-valor" inputmode="numeric" placeholder="0,00" required />
             </label>
+            <div class="field comprovante-field">
+              <span class="field__label">Comprovante / notinha (opcional)</span>
+              <div class="comprovante-field__row">
+                <button type="button" class="btn btn--secondary btn--sm" id="pessoal-foto-btn">📷 Tirar ou anexar foto</button>
+                <button type="button" class="btn btn--ghost btn--sm hidden" id="pessoal-foto-limpar">Remover</button>
+              </div>
+              <input type="file" id="pessoal-foto" class="hidden" accept="image/*" capture="environment" />
+              <div id="pessoal-foto-preview" class="comprovante-preview hidden">
+                <img alt="Prévia do comprovante" />
+              </div>
+            </div>
             <button type="submit" class="btn btn--primary btn--block" id="btn-salvar-pessoal">Salvar despesa</button>
             <button type="button" class="btn btn--ghost btn--block hidden" id="btn-cancelar-pessoal">Cancelar edição</button>
           </form>
@@ -751,10 +784,25 @@
     </div>
   </dialog>
 
+  <!-- Comprovante / notinha -->
+  <dialog id="modal-comprovante" class="modal modal--wide">
+    <div class="modal__box modal__box--comprovante">
+      <h3 class="modal__title">Comprovante</h3>
+      <div class="comprovante-viewer">
+        <img id="modal-comprovante-img" alt="Comprovante" />
+      </div>
+      <div class="modal__actions">
+        <a id="modal-comprovante-abrir" class="btn btn--secondary" href="#" target="_blank" rel="noopener">Abrir original</a>
+        <button type="button" id="btn-fechar-comprovante" class="btn btn--primary">Fechar</button>
+      </div>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
   <script src="js/firebase-config.js"></script>
   <script src="js/app.js"></script>
 </body>

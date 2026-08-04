@@ -1793,6 +1793,51 @@ select {
   background: var(--brand-soft);
 }
 
+.comprovante-field__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.comprovante-preview {
+  margin-top: 0.65rem;
+}
+
+.comprovante-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 160px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #f7f3ec;
+}
+
+.comprovante-viewer {
+  margin: 0.75rem 0 1rem;
+  text-align: center;
+}
+
+.comprovante-viewer img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  border-radius: 12px;
+}
+
+.modal__box--comprovante {
+  max-width: min(720px, 100%);
+}
+
+.btn--foto {
+  min-width: 2.1rem;
+  padding: 0.25rem 0.45rem;
+}
+
 .acerto-item {
   flex-wrap: wrap;
 }
