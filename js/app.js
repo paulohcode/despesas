@@ -1049,6 +1049,15 @@
     );
   }
 
+  /** Admin vê tudo; demais só pendências em que entram como credor/devedor. */
+  function pendenciasVisiveis(lista) {
+    const items = Array.isArray(lista) ? lista : [];
+    if (isAdmin()) return items;
+    const u = usuarioAtual();
+    if (!u) return [];
+    return items.filter((p) => usuarioNaPendencia(p, u));
+  }
+
   function souCredorDaPendencia(p, u) {
     if (!p || !u) return false;
     if (p.credorId === u.id) return true;
@@ -5770,7 +5779,7 @@
       else map[key].nome = label;
       return map[key];
     };
-    state.pendencias
+    pendenciasVisiveis(state.pendencias)
       .filter((p) => p.status === "pendente" && (p.data || "").slice(0, 7) === mesId)
       .forEach((p) => {
         const valor = Number(p.valor) || 0;
@@ -5955,7 +5964,9 @@
     }
 
     if (relatorioModo === "pendencias") {
-      const items = state.pendencias.filter((p) => (p.data || "").slice(0, 7) === mesId);
+      const items = pendenciasVisiveis(state.pendencias).filter(
+        (p) => (p.data || "").slice(0, 7) === mesId
+      );
       const abertas = items.filter((p) => p.status === "pendente");
       const saldos = calcularSaldosPendenciasMes(mesId);
       const transfers = calcularTransferencias(saldos);
@@ -5971,7 +5982,7 @@
       items.forEach((p) => {
         const st = p.status === "pago" ? "pago" : "pendente";
         linhas.push(
-          `• ${formatDate(p.data)} — ${p.descricao}: ${formatMoney(p.valor)} (${st})`
+          `• ${formatDate(p.data)} — ${p.descricao}: ${formatMoney(p.valor)} (${p.devedorNome} → ${p.credorNome}, ${st})`
         );
       });
       return linhas.join("\n").trim();
@@ -6381,7 +6392,7 @@
 
   function renderRelatorioPendencias() {
     const mesId = mesSelecionado;
-    const items = state.pendencias
+    const items = pendenciasVisiveis(state.pendencias)
       .filter((p) => (p.data || "").slice(0, 7) === mesId)
       .sort((a, b) => (b.data || "").localeCompare(a.data || ""));
     const abertas = items.filter((p) => p.status === "pendente");
@@ -6389,6 +6400,9 @@
     const transfers = calcularTransferencias(saldos);
     const total = abertas.reduce((acc, p) => acc + (Number(p.valor) || 0), 0);
     const tituloMes = mesId ? labelMes(mesId) : "Nenhum mês";
+    const metaAcerto = isAdmin()
+      ? "Pendências abertas com data neste mês (visão admin)."
+      : "Só suas pendências abertas neste mês.";
 
     $("#resumo-rel-pendencias").innerHTML =
       `
@@ -6399,7 +6413,7 @@
       </div>` +
       htmlBlocoAcerto({
         titulo: "Acerto entre nós",
-        meta: "Pendências abertas com data neste mês.",
+        meta: metaAcerto,
         saldos,
         transfers,
         vazio: !abertas.length,
@@ -6411,6 +6425,9 @@
     const empty = $("#empty-rel-pendencias");
     if (!items.length) {
       lista.innerHTML = "";
+      empty.textContent = isAdmin()
+        ? "Nenhuma pendência com data neste mês."
+        : "Nenhuma pendência sua com data neste mês.";
       empty.classList.remove("hidden");
       return;
     }
