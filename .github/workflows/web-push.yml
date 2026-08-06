@@ -1,0 +1,27 @@
+name: Web Push
+
+on:
+  schedule:
+    # GitHub Actions (repos públicos): mínimo ~5 minutos
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: scripts/package.json
+      - name: Install
+        working-directory: scripts
+        run: npm install
+      - name: Processar fila de push
+        working-directory: scripts
+        run: node process-web-push.mjs
+        env:
+          FIREBASE_DB_URL: https://despesas-9975a-default-rtdb.firebaseio.com
+          CASA_CODIGO: familia-silva

@@ -8,7 +8,7 @@
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
-  const APP_BUILD = "v56";
+  const APP_BUILD = "v57";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -2182,13 +2182,108 @@
     if (pushBuildRequest) return pushBuildRequest;
     try {
       const mod = await import("https://esm.sh/@block65/webcrypto-web-push@1.0.2");
-      pushBuildRequest = mod.buildPushHTTPRequest || mod.default?.buildPushHTTPRequest;
+      pushBuildRequest = mod.buildPushPayload || mod.default?.buildPushPayload || null;
       return pushBuildRequest;
     } catch (err) {
       console.warn("web push lib:", err);
       pushBuildRequest = null;
       return null;
     }
+  }
+
+  async function enfileirarWebPush(userId, subscription, titulo, texto, tag) {
+    if (!firebasePronto() || !codigoCasa || !subscription?.endpoint) return null;
+    const jobId = uid();
+    try {
+      await firebase
+        .database()
+        .ref(`casas/${codigoCasa}/pushQueue/${jobId}`)
+        .set({
+          userId: userId || null,
+          subscription,
+          title: String(titulo || "Despesas").slice(0, 80),
+          body: String(texto || "").slice(0, 180),
+          tag: tag || jobId,
+          createdAt: Date.now(),
+        });
+      return jobId;
+    } catch (err) {
+      console.warn("fila push:", err);
+      return null;
+    }
+  }
+
+  async function enviarViaRelay(subscription, titulo, texto, tag) {
+    const vapid = window.VAPID_CONFIG;
+    const relay = String(vapid?.relayUrl || "").trim();
+    if (!relay) return false;
+    const res = await fetch(relay, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subscription,
+        title: titulo,
+        body: texto,
+        tag: tag || "despesas",
+        vapid: {
+          publicKey: vapid.publicKey,
+          privateKey: vapid.privateKey,
+          subject: vapid.subject || "mailto:familia@despesas.local",
+        },
+      }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      console.warn("relay push:", res.status, t);
+      return false;
+    }
+    return true;
+  }
+
+  async function enviarViaCorsProxy(subscription, titulo, texto, tag) {
+    const vapid = window.VAPID_CONFIG;
+    if (!vapid?.publicKey || !vapid?.privateKey) return false;
+    const build = await carregarWebPushLib();
+    if (!build) return false;
+
+    const init = await build(
+      {
+        data: JSON.stringify({
+          title: titulo,
+          body: texto,
+          tag: tag || "despesas",
+        }),
+        options: { ttl: 60 * 60, urgency: "high" },
+      },
+      subscription,
+      {
+        subject: vapid.subject || "mailto:familia@despesas.local",
+        publicKey: vapid.publicKey,
+        privateKey: vapid.privateKey,
+      }
+    );
+
+    // 1) tentativa direta (quase sempre bloqueada por CORS)
+    try {
+      const r = await fetch(subscription.endpoint, init);
+      if (r.ok || r.status === 201) return true;
+    } catch {
+      /* CORS esperado */
+    }
+
+    // 2) proxy público (best-effort; pode falhar)
+    try {
+      const proxied = `https://corsproxy.io/?${encodeURIComponent(subscription.endpoint)}`;
+      const r2 = await fetch(proxied, {
+        method: init.method || "POST",
+        headers: init.headers,
+        body: init.body,
+      });
+      if (r2.ok || r2.status === 201) return true;
+    } catch (err) {
+      console.warn("corsproxy push:", err);
+    }
+    return false;
   }
 
   async function enviarWebPushParaUsuario(userId, titulo, texto, tag) {
@@ -2202,32 +2297,32 @@
       const subscription = row?.subscription;
       if (!subscription?.endpoint) return;
 
-      const build = await carregarWebPushLib();
-      if (!build) return;
+      // Sempre enfileira: o GitHub Actions envia mesmo com o app fechado
+      const jobId = await enfileirarWebPush(userId, subscription, titulo, texto, tag);
 
-      const payload = JSON.stringify({
-        title: titulo,
-        body: texto,
-        tag: tag || "despesas",
-      });
+      // Tentativa instantânea (relay Cloudflare ou proxy)
+      let sent = false;
+      try {
+        sent = await enviarViaRelay(subscription, titulo, texto, tag);
+      } catch (err) {
+        console.warn("relay:", err);
+      }
+      if (!sent) {
+        try {
+          sent = await enviarViaCorsProxy(subscription, titulo, texto, tag);
+        } catch (err) {
+          console.warn("proxy push:", err);
+        }
+      }
 
-      const requestInfo = await build({
-        applicationServerKeys: {
-          publicKey: urlBase64ToUint8Array(vapid.publicKey),
-          privateKey: urlBase64ToUint8Array(vapid.privateKey),
-        },
-        payload,
-        target: subscription,
-        adminContact: vapid.subject || "mailto:familia@despesas.local",
-        ttl: 60 * 60,
-        urgency: "high",
-      });
-
-      await fetch(requestInfo.endpoint || requestInfo.url, {
-        method: requestInfo.method || "POST",
-        headers: requestInfo.headers,
-        body: requestInfo.body,
-      });
+      // Se já entregou, tira da fila para não duplicar no Actions
+      if (sent && jobId) {
+        try {
+          await firebase.database().ref(`casas/${codigoCasa}/pushQueue/${jobId}`).remove();
+        } catch {
+          /* ignore */
+        }
+      }
     } catch (err) {
       console.warn("enviar webpush:", err);
     }
