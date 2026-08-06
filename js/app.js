@@ -87,6 +87,7 @@
   let pushTimer = null;
   let lastRemoteUpdatedAt = 0;
   let syncStatus = "offline"; // offline | syncing | online | error | local
+  let ignoreRemoteUntil = 0; // evita eco da nuvem sobrescrever save local recente
   const pendingComprovante = { mercado: null, despesa: null, pessoal: null }; // Blob|null
   const comprovanteExistente = { mercado: null, despesa: null, pessoal: null }; // {url,path,data}|null when editing
   const comprovanteRemovido = { mercado: false, despesa: false, pessoal: false };
@@ -305,6 +306,8 @@
 
   function saveState() {
     state.updatedAt = Date.now();
+    // Janela curta: listener da nuvem não deve reaplicar versão antiga
+    ignoreRemoteUntil = Date.now() + 2500;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     salvarBackupLocal("save");
     if (!applyingRemote) schedulePush();
@@ -330,14 +333,17 @@
   function salvarBackupLocal(motivo) {
     try {
       const score = scoreEstado(state);
-      if (score < 4) return;
+      if (score < 1 && !(Array.isArray(state.pessoas) && state.pessoas.length)) return;
       let prev = null;
       try {
         prev = JSON.parse(localStorage.getItem(BACKUP_KEY) || "null");
       } catch {
         prev = null;
       }
-      if (prev?.state && scoreEstado(prev.state) > score) return;
+      const prevAt = Number(prev?.state?.updatedAt) || 0;
+      const curAt = Number(state.updatedAt) || 0;
+      // Só recusa backup se o anterior for MAIS NOVO (não se tiver mais itens)
+      if (prev?.state && prevAt > curAt) return;
       localStorage.setItem(
         BACKUP_KEY,
         JSON.stringify({
@@ -363,6 +369,10 @@
     }
   }
 
+  /**
+   * Decisão de sync: updatedAt mais novo vence (permite exclusões).
+   * Score só serve de proteção anti-wipe (nuvem/local vazio vs dados reais).
+   */
   function devePreferirRemoto(local, remote) {
     if (!remote) return false;
     const rScore = scoreEstado(remote);
@@ -370,31 +380,35 @@
     const rAt = Number(remote.updatedAt) || 0;
     const lAt = Number(local?.updatedAt) || 0;
 
-    // Nunca deixar um local pobre/vazio sobrescrever nuvem rica
+    // Local sem dados → aceitar nuvem
     if (rScore > 0 && lScore === 0) return true;
-    if (rScore >= lScore + 4) return true;
 
+    // Anti-wipe: nuvem praticamente vazia não apaga local rico/mais novo
+    if (lScore >= 8 && rScore < 5 && lAt >= rAt) return false;
+
+    // Quem salvou por último vence (inclusões e exclusões)
     if (rAt > lAt) return true;
-    if (rAt < lAt) {
-      // Local "mais novo", mas bem mais pobre → manter remoto
-      if (lScore + 4 < rScore) return true;
-      return false;
-    }
-    return rScore >= lScore;
+    if (rAt < lAt) return false;
+
+    // Empate de tempo: desempate por score
+    return rScore > lScore;
   }
 
   function podeEnviarParaNuvem(local, remote) {
-    if (!remote) return scoreEstado(local) > 0;
+    if (!remote) return scoreEstado(local) > 0 || (Array.isArray(local.pessoas) && local.pessoas.length > 0);
     const lScore = scoreEstado(local);
     const rScore = scoreEstado(remote);
     const lAt = Number(local?.updatedAt) || 0;
     const rAt = Number(remote?.updatedAt) || 0;
 
+    // Nunca enviar wipe em cima de nuvem com dados
     if (lScore === 0 && rScore > 0) return false;
-    if (rScore >= lScore + 4) return false;
-    if (lAt < rAt) return false;
-    if (lAt === rAt && lScore < rScore) return false;
-    return true;
+    if (lScore < 5 && rScore >= 8 && lAt < rAt) return false;
+
+    // Local mais novo → enviar (mesmo com menos itens = exclusão legítima)
+    if (lAt > rAt) return true;
+    if (lAt === rAt && lScore >= rScore) return true;
+    return false;
   }
 
   function firebasePronto() {
@@ -475,14 +489,22 @@
   function applyRemotePayload(payload) {
     if (!payload || typeof payload !== "object") return;
     const remoteAt = Number(payload.updatedAt) || 0;
-    if (remoteAt && remoteAt <= (state.updatedAt || 0) && remoteAt <= lastRemoteUpdatedAt) {
+    const localAt = Number(state.updatedAt) || 0;
+
+    // Local igual ou mais novo: não sobrescrever (protege exclusão/adição recente)
+    if (remoteAt && remoteAt <= localAt) {
+      return;
+    }
+    if (remoteAt && remoteAt <= lastRemoteUpdatedAt) {
+      return;
+    }
+    // Durante janela pós-save, só aceita remoto claramente mais novo
+    if (Date.now() < ignoreRemoteUntil && remoteAt <= localAt) {
       return;
     }
 
-    // Se o local está bem mais completo, não aceitar nuvem pobre (evita wipe)
-    if (!devePreferirRemoto(state, payload) && scoreEstado(state) > scoreEstado(payload)) {
-      console.warn("Ignorando nuvem mais pobre que o estado local.");
-      schedulePush();
+    if (!devePreferirRemoto(state, payload)) {
+      if (podeEnviarParaNuvem(state, payload)) schedulePush();
       return;
     }
 
@@ -619,7 +641,11 @@
       let best = null;
       Object.values(all).forEach((b) => {
         if (!b || typeof b !== "object") return;
-        if (!best || scoreEstado(b) > scoreEstado(best)) best = b;
+        const bAt = Number(b.updatedAt) || 0;
+        const bestAt = Number(best?.updatedAt) || 0;
+        if (!best || bAt > bestAt || (bAt === bestAt && scoreEstado(b) > scoreEstado(best))) {
+          best = b;
+        }
       });
       return best;
     } catch (err) {
@@ -646,11 +672,17 @@
         if (!result.committed) {
           if (remoteNow && devePreferirRemoto(state, remoteNow)) {
             applyRemotePayload(remoteNow);
+            setSyncStatus("online", "Nuvem tinha versão mais nova");
+          } else {
+            // Tentou de novo em breve (corrida comum após exclusão)
+            setSyncStatus("online", "Reenviando alterações…");
+            setTimeout(() => {
+              if (!applyingRemote) pushToCloud();
+            }, 700);
           }
-          setSyncStatus("online", "Nuvem preservada (versão mais completa)");
           return;
         }
-        lastRemoteUpdatedAt = payload.updatedAt;
+        lastRemoteUpdatedAt = Number(payload.updatedAt) || Date.now();
         arquivarBackupNuvem(payload);
         setSyncStatus("online", "Dados sincronizados");
       })
@@ -699,30 +731,40 @@
         .then(async (snap) => {
           let remote = snap.val();
 
-          // Se a nuvem principal está pobre, tenta backup automático
+          // Se a nuvem principal está pobre/vazia, tenta o backup mais recente
           if (!remote || scoreEstado(remote) < 5) {
             const backup = await buscarMelhorBackupNuvem();
-            if (backup && scoreEstado(backup) > scoreEstado(remote || {})) {
+            const remoteAtBoot = Number(remote?.updatedAt) || 0;
+            const backupAtBoot = Number(backup?.updatedAt) || 0;
+            if (
+              backup &&
+              scoreEstado(backup) > scoreEstado(remote || {}) &&
+              backupAtBoot >= remoteAtBoot
+            ) {
               remote = backup;
               toast("Recuperado backup automático da nuvem.");
             }
           }
 
-          // Backup local mais rico que nuvem e local atual?
+          // Backup local só restaura se for mais novo que o estado atual e a nuvem
           const localBackup = lerBackupLocal();
+          const backupAt = Number(localBackup?.state?.updatedAt) || 0;
+          const stateAt = Number(state.updatedAt) || 0;
+          const remoteAt0 = Number(remote?.updatedAt) || 0;
           if (
             localBackup?.state &&
-            scoreEstado(localBackup.state) > scoreEstado(state) &&
-            scoreEstado(localBackup.state) > scoreEstado(remote || {})
+            backupAt > stateAt &&
+            backupAt > remoteAt0 &&
+            scoreEstado(localBackup.state) > 0
           ) {
             applyingRemote = true;
             try {
-              state = { ...localBackup.state, updatedAt: Date.now() };
+              state = { ...localBackup.state, updatedAt: backupAt };
               localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
             } finally {
               applyingRemote = false;
             }
-            toast("Restaurado backup local mais completo.");
+            toast("Restaurado backup local mais recente.");
             return pushToCloud();
           }
 
@@ -732,7 +774,7 @@
             } else if (podeEnviarParaNuvem(state, remote)) {
               return pushToCloud();
             }
-          } else if (scoreEstado(state) > 0) {
+          } else if (scoreEstado(state) > 0 || (state.pessoas && state.pessoas.length)) {
             return pushToCloud();
           }
           // remoto vazio e local vazio: não faz nada
@@ -741,10 +783,16 @@
           const handler = (snap) => {
             const remote = snap.val();
             if (!remote) return;
-            if (Number(remote.updatedAt) === Number(state.updatedAt)) return;
-            if (Number(remote.updatedAt) <= Number(lastRemoteUpdatedAt)) return;
+            const remoteAt = Number(remote.updatedAt) || 0;
+            const localAt = Number(state.updatedAt) || 0;
+            if (remoteAt === localAt) return;
+            if (remoteAt <= lastRemoteUpdatedAt) return;
+            if (remoteAt <= localAt) {
+              // Eco antigo ou versão velha — reenvia o local se for o caso
+              if (podeEnviarParaNuvem(state, remote)) schedulePush();
+              return;
+            }
             if (!devePreferirRemoto(state, remote)) {
-              // Nuvem chegou mais pobre/desatualizada — reenvia o local se for seguro
               if (podeEnviarParaNuvem(state, remote)) schedulePush();
               return;
             }
