@@ -313,19 +313,73 @@
     if (!applyingRemote) schedulePush();
   }
 
+  function asArray(val) {
+    if (!val) return [];
+    if (Array.isArray(val)) return val.filter((x) => x != null);
+    if (typeof val === "object") {
+      return Object.keys(val)
+        .sort((a, b) => Number(a) - Number(b))
+        .map((k) => val[k])
+        .filter((x) => x != null && typeof x === "object");
+    }
+    return [];
+  }
+
+  /** Remove base64 gigante do payload da nuvem (mantém URL ImgBB). Evita falha de sync ~1MB+. */
+  function enxugarItemComprovante(item) {
+    if (!item || typeof item !== "object") return item;
+    if (!item.comprovanteData) return item;
+    const copy = { ...item };
+    if (copy.comprovanteUrl) {
+      delete copy.comprovanteData;
+    } else if (String(copy.comprovanteData).length > 80_000) {
+      // Sem URL e data enorme: não manda para a nuvem (senão o sync quebra)
+      delete copy.comprovanteData;
+    }
+    return copy;
+  }
+
+  function enxugarLista(lista) {
+    return asArray(lista).map(enxugarItemComprovante);
+  }
+
+  function normalizarPayloadRemoto(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    return {
+      ...payload,
+      updatedAt: Number(payload.updatedAt) || 0,
+      lancamentos: enxugarLista(payload.lancamentos),
+      grupos: asArray(payload.grupos),
+      meses: asArray(payload.meses),
+      pessoas: asArray(payload.pessoas),
+      tiposDespesa: asArray(payload.tiposDespesa),
+      pendencias: asArray(payload.pendencias),
+      pessoais: enxugarLista(payload.pessoais),
+      pessoalReceitas: asArray(payload.pessoalReceitas),
+      pessoalAcessos: asArray(payload.pessoalAcessos),
+      pessoalTipos: asArray(payload.pessoalTipos),
+      pessoalTiposReceita: asArray(payload.pessoalTiposReceita),
+      pessoalCategorias: asArray(payload.pessoalCategorias),
+      pessoalPagamentos: asArray(payload.pessoalPagamentos),
+      pessoalDespesasFixas: asArray(payload.pessoalDespesasFixas),
+      encontrosQuitacoes: asArray(payload.encontrosQuitacoes),
+      notificacoes: asArray(payload.notificacoes),
+    };
+  }
+
   function scoreEstado(s) {
     if (!s || typeof s !== "object") return 0;
-    const meses = Array.isArray(s.meses) ? s.meses : [];
+    const meses = asArray(s.meses);
     return (
-      (Array.isArray(s.lancamentos) ? s.lancamentos.length : 0) * 6 +
-      (Array.isArray(s.pendencias) ? s.pendencias.length : 0) * 2 +
-      (Array.isArray(s.pessoais) ? s.pessoais.length : 0) * 2 +
-      (Array.isArray(s.pessoalReceitas) ? s.pessoalReceitas.length : 0) * 2 +
-      (Array.isArray(s.pessoalDespesasFixas) ? s.pessoalDespesasFixas.length : 0) +
-      (Array.isArray(s.encontrosQuitacoes) ? s.encontrosQuitacoes.length : 0) +
+      asArray(s.lancamentos).length * 6 +
+      asArray(s.pendencias).length * 2 +
+      asArray(s.pessoais).length * 2 +
+      asArray(s.pessoalReceitas).length * 2 +
+      asArray(s.pessoalDespesasFixas).length +
+      asArray(s.encontrosQuitacoes).length +
       meses.length * 3 +
       meses.filter((m) => m && m.status === "fechado").length * 5 +
-      (Array.isArray(s.pessoas) ? s.pessoas.length : 0) +
+      asArray(s.pessoas).length +
       (s.mesAtual ? 2 : 0)
     );
   }
@@ -465,29 +519,30 @@
   function payloadFromState() {
     return {
       updatedAt: state.updatedAt || Date.now(),
-      lancamentos: state.lancamentos,
-      grupos: state.grupos,
+      lancamentos: enxugarLista(state.lancamentos),
+      grupos: asArray(state.grupos),
       pesos: pesosFromGrupos(state.grupos),
-      meses: state.meses,
+      meses: asArray(state.meses),
       mesAtual: state.mesAtual,
-      pessoas: state.pessoas,
-      tiposDespesa: state.tiposDespesa,
-      pendencias: state.pendencias,
-      pessoais: state.pessoais,
-      pessoalReceitas: state.pessoalReceitas,
-      pessoalAcessos: state.pessoalAcessos,
-      pessoalTipos: state.pessoalTipos,
-      pessoalTiposReceita: state.pessoalTiposReceita,
-      pessoalCategorias: state.pessoalCategorias,
-      pessoalPagamentos: state.pessoalPagamentos,
-      pessoalDespesasFixas: state.pessoalDespesasFixas,
-      encontrosQuitacoes: state.encontrosQuitacoes,
-      notificacoes: state.notificacoes,
+      pessoas: asArray(state.pessoas),
+      tiposDespesa: asArray(state.tiposDespesa),
+      pendencias: asArray(state.pendencias),
+      pessoais: enxugarLista(state.pessoais),
+      pessoalReceitas: asArray(state.pessoalReceitas),
+      pessoalAcessos: asArray(state.pessoalAcessos),
+      pessoalTipos: asArray(state.pessoalTipos),
+      pessoalTiposReceita: asArray(state.pessoalTiposReceita),
+      pessoalCategorias: asArray(state.pessoalCategorias),
+      pessoalPagamentos: asArray(state.pessoalPagamentos),
+      pessoalDespesasFixas: asArray(state.pessoalDespesasFixas),
+      encontrosQuitacoes: asArray(state.encontrosQuitacoes),
+      notificacoes: asArray(state.notificacoes).slice(0, 120),
     };
   }
 
   function applyRemotePayload(payload) {
-    if (!payload || typeof payload !== "object") return;
+    payload = normalizarPayloadRemoto(payload);
+    if (!payload) return;
     const remoteAt = Number(payload.updatedAt) || 0;
     const localAt = Number(state.updatedAt) || 0;
 
@@ -520,28 +575,24 @@
     try {
       const grupos = normalizarGrupos(payload.grupos, payload.pesos);
       state = {
-        lancamentos: Array.isArray(payload.lancamentos) ? payload.lancamentos : [],
+        lancamentos: asArray(payload.lancamentos),
         grupos,
         pesos: pesosFromGrupos(grupos),
-        meses: Array.isArray(payload.meses) ? payload.meses : [],
+        meses: asArray(payload.meses),
         mesAtual: payload.mesAtual || null,
-        pessoas: Array.isArray(payload.pessoas) ? payload.pessoas : [],
+        pessoas: asArray(payload.pessoas),
         tiposDespesa: normalizarTiposDespesa(payload.tiposDespesa),
-        pendencias: Array.isArray(payload.pendencias) ? payload.pendencias : [],
-        pessoais: Array.isArray(payload.pessoais) ? payload.pessoais : [],
-        pessoalReceitas: Array.isArray(payload.pessoalReceitas) ? payload.pessoalReceitas : [],
-        pessoalAcessos: Array.isArray(payload.pessoalAcessos) ? payload.pessoalAcessos : [],
-        pessoalTipos: Array.isArray(payload.pessoalTipos) ? payload.pessoalTipos : [],
-        pessoalTiposReceita: Array.isArray(payload.pessoalTiposReceita) ? payload.pessoalTiposReceita : [],
-        pessoalCategorias: Array.isArray(payload.pessoalCategorias) ? payload.pessoalCategorias : [],
-        pessoalPagamentos: Array.isArray(payload.pessoalPagamentos) ? payload.pessoalPagamentos : [],
-        pessoalDespesasFixas: Array.isArray(payload.pessoalDespesasFixas)
-          ? payload.pessoalDespesasFixas
-          : [],
-        encontrosQuitacoes: Array.isArray(payload.encontrosQuitacoes)
-          ? payload.encontrosQuitacoes
-          : [],
-        notificacoes: Array.isArray(payload.notificacoes) ? payload.notificacoes : [],
+        pendencias: asArray(payload.pendencias),
+        pessoais: asArray(payload.pessoais),
+        pessoalReceitas: asArray(payload.pessoalReceitas),
+        pessoalAcessos: asArray(payload.pessoalAcessos),
+        pessoalTipos: asArray(payload.pessoalTipos),
+        pessoalTiposReceita: asArray(payload.pessoalTiposReceita),
+        pessoalCategorias: asArray(payload.pessoalCategorias),
+        pessoalPagamentos: asArray(payload.pessoalPagamentos),
+        pessoalDespesasFixas: asArray(payload.pessoalDespesasFixas),
+        encontrosQuitacoes: asArray(payload.encontrosQuitacoes),
+        notificacoes: asArray(payload.notificacoes),
         updatedAt: remoteAt || Date.now(),
       };
       state.lancamentos = state.lancamentos.map((l) => migrarVaquinha(l));
@@ -604,7 +655,7 @@
   function schedulePush() {
     if (!firebasePronto() || !codigoCasa || !navigator.onLine) return;
     clearTimeout(pushTimer);
-    pushTimer = setTimeout(() => pushToCloud(), 400);
+    pushTimer = setTimeout(() => pushToCloud(), 200);
   }
 
   function arquivarBackupNuvem(payload) {
@@ -660,35 +711,35 @@
     const payload = payloadFromState();
     salvarBackupLocal("antes-push");
 
+    // Compara só updatedAt (leve) e faz set direto — transaction em ~1,5MB falhava e a exclusão não ia pra nuvem
     return syncRef
-      .transaction((current) => {
-        if (!podeEnviarParaNuvem(payload, current)) {
-          return; // aborta — mantém a nuvem
+      .child("updatedAt")
+      .once("value")
+      .then((atSnap) => {
+        const rAt = Number(atSnap.val()) || 0;
+        const lAt = Number(payload.updatedAt) || 0;
+        if (rAt > lAt) {
+          return syncRef.once("value").then((full) => {
+            const remoteNow = normalizarPayloadRemoto(full.val());
+            if (remoteNow && devePreferirRemoto(state, remoteNow)) {
+              applyRemotePayload(remoteNow);
+              setSyncStatus("online", "Nuvem tinha versão mais nova");
+            } else {
+              setSyncStatus("online", "Sincronizado");
+            }
+          });
         }
-        return payload;
-      })
-      .then((result) => {
-        const remoteNow = result.snapshot ? result.snapshot.val() : null;
-        if (!result.committed) {
-          if (remoteNow && devePreferirRemoto(state, remoteNow)) {
-            applyRemotePayload(remoteNow);
-            setSyncStatus("online", "Nuvem tinha versão mais nova");
-          } else {
-            // Tentou de novo em breve (corrida comum após exclusão)
-            setSyncStatus("online", "Reenviando alterações…");
-            setTimeout(() => {
-              if (!applyingRemote) pushToCloud();
-            }, 700);
-          }
-          return;
-        }
-        lastRemoteUpdatedAt = Number(payload.updatedAt) || Date.now();
-        arquivarBackupNuvem(payload);
-        setSyncStatus("online", "Dados sincronizados");
+        return syncRef.set(payload).then(() => {
+          lastRemoteUpdatedAt = lAt;
+          ignoreRemoteUntil = Date.now() + 1500;
+          arquivarBackupNuvem(payload);
+          setSyncStatus("online", "Dados sincronizados");
+        });
       })
       .catch((err) => {
-        console.error(err);
+        console.error("pushToCloud:", err);
         setSyncStatus("error", err.message || "Falha ao enviar");
+        toast("Falha ao salvar na nuvem. Tente de novo com internet.");
       });
   }
 
@@ -729,7 +780,7 @@
       return syncRef
         .once("value")
         .then(async (snap) => {
-          let remote = snap.val();
+          let remote = normalizarPayloadRemoto(snap.val());
 
           // Se a nuvem principal está pobre/vazia, tenta o backup mais recente
           if (!remote || scoreEstado(remote) < 5) {
@@ -781,7 +832,7 @@
         })
         .then(() => {
           const handler = (snap) => {
-            const remote = snap.val();
+            const remote = normalizarPayloadRemoto(snap.val());
             if (!remote) return;
             const remoteAt = Number(remote.updatedAt) || 0;
             const localAt = Number(state.updatedAt) || 0;
@@ -2693,6 +2744,8 @@
           refId: item.id,
         });
         saveState();
+        clearTimeout(pushTimer);
+        pushToCloud();
         updateNotifBadge();
         renderMercadoLista();
         renderRelatorio();
@@ -2852,6 +2905,8 @@
           refId: item.id,
         });
         saveState();
+        clearTimeout(pushTimer);
+        pushToCloud();
         updateNotifBadge();
         renderDespesaLista();
         renderRelatorio();
