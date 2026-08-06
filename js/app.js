@@ -1287,16 +1287,16 @@
   }
 
   async function compressImageFile(file, maxSide = 1280, quality = 0.72) {
-    const bitmap = await createImageBitmap(file);
-    try {
-      const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-      const w = Math.max(1, Math.round(bitmap.width * scale));
-      const h = Math.max(1, Math.round(bitmap.height * scale));
+    const drawToBlob = async (source, width, height) => {
+      const scale = Math.min(1, maxSide / Math.max(width, height));
+      const w = Math.max(1, Math.round(width * scale));
+      const h = Math.max(1, Math.round(height * scale));
       const canvas = document.createElement("canvas");
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext("2d");
-      ctx.drawImage(bitmap, 0, 0, w, h);
+      if (!ctx) throw new Error("Canvas indisponível");
+      ctx.drawImage(source, 0, 0, w, h);
       const blob = await new Promise((resolve, reject) => {
         canvas.toBlob(
           (b) => (b ? resolve(b) : reject(new Error("Falha ao comprimir imagem"))),
@@ -1305,9 +1305,237 @@
         );
       });
       return blob;
-    } finally {
-      bitmap.close?.();
+    };
+
+    // Caminho preferencial
+    if (typeof createImageBitmap === "function") {
+      try {
+        const bitmap = await createImageBitmap(file);
+        try {
+          return await drawToBlob(bitmap, bitmap.width, bitmap.height);
+        } finally {
+          bitmap.close?.();
+        }
+      } catch (err) {
+        console.warn("createImageBitmap falhou, tentando fallback:", err);
+      }
     }
+
+    // Fallback (alguns Androids / fotos da câmera)
+    const dataUrl = await blobToDataURL(file);
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("Não foi possível ler a foto"));
+      el.src = dataUrl;
+    });
+    return drawToBlob(img, img.naturalWidth || img.width, img.naturalHeight || img.height);
+  }
+
+  function criarInputFotoTemporario(usarCamera) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.setAttribute("accept", "image/*");
+    if (usarCamera) {
+      input.setAttribute("capture", "environment");
+      input.capture = "environment";
+    }
+    // Não usar display:none — alguns celulares ignoram o change da câmera
+    input.className = "file-input-visually-hidden";
+    document.body.appendChild(input);
+    return input;
+  }
+
+  function escolherOrigemEArquivo() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      overlay.className = "foto-origem-overlay";
+      overlay.innerHTML = `
+        <div class="foto-origem-sheet" role="dialog" aria-label="Origem da foto">
+          <p class="foto-origem-sheet__titulo">Como deseja anexar?</p>
+          <button type="button" class="btn btn--secondary" data-origem="camera">📷 Câmera</button>
+          <button type="button" class="btn btn--secondary" data-origem="galeria">🖼 Galeria</button>
+          <button type="button" class="btn btn--ghost" data-origem="">Cancelar</button>
+        </div>`;
+
+      let settled = false;
+      const finish = (file) => {
+        if (settled) return;
+        settled = true;
+        overlay.remove();
+        resolve(file || null);
+      };
+
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) finish(null);
+      });
+
+      overlay.querySelectorAll("[data-origem]").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const origem = btn.dataset.origem || "";
+          if (!origem) {
+            finish(null);
+            return;
+          }
+          // Abrir o seletor no MESMO toque (obrigatório no celular)
+          const input = criarInputFotoTemporario(origem === "camera");
+          const limparInput = () => {
+            try {
+              input.remove();
+            } catch {
+              /* ignore */
+            }
+          };
+          input.addEventListener(
+            "change",
+            () => {
+              const file = input.files?.[0] || null;
+              limparInput();
+              finish(file);
+            },
+            { once: true }
+          );
+          input.addEventListener(
+            "cancel",
+            () => {
+              limparInput();
+              finish(null);
+            },
+            { once: true }
+          );
+          // Se o celular não dispara "cancel" ao fechar a câmera
+          const onFocusBack = () => {
+            setTimeout(() => {
+              if (settled) return;
+              if (input.files?.length) return;
+              limparInput();
+              finish(null);
+            }, 600);
+          };
+          setTimeout(() => {
+            window.addEventListener("focus", onFocusBack, { once: true });
+          }, 400);
+          // Esconde o sheet mas mantém o fluxo; click no mesmo toque
+          overlay.style.visibility = "hidden";
+          input.click();
+        });
+      });
+
+      document.body.appendChild(overlay);
+    });
+  }
+
+  async function anexarComprovanteExistente(itemId, kind) {
+    const item = resolverItemComprovante(itemId, kind);
+    if (!item) return toast("Lançamento não encontrado.");
+    if (kind === "pessoal") {
+      if (!podeEditarPessoalDe(item.donoId)) return toast("Sem permissão.");
+    } else {
+      if (item.lancadoPorId !== usuarioAtualId) return toast("Só quem lançou pode anexar.");
+      if (!mesEstaAberto(item.mesId)) return toast("Só é possível anexar no mês aberto.");
+    }
+
+    const file = await escolherOrigemEArquivo();
+    if (!file) return toast("Nenhuma foto selecionada.");
+
+    try {
+      if (!imgbbPronto()) {
+        return toast("Configure a chave ImgBB em js/firebase-config.js (veja api.imgbb.com).");
+      }
+      toast("Enviando foto…");
+      const blob = await compressImageFile(file);
+      const result = await uploadComprovante(blob, item.id);
+      if (result.url) {
+        item.comprovanteUrl = result.url;
+        item.comprovantePath = result.path || "";
+        item.comprovanteProvider = result.provider || "imgbb";
+        delete item.comprovanteData;
+      } else if (result.data) {
+        item.comprovanteData = result.data;
+        item.comprovanteProvider = "data";
+        delete item.comprovanteUrl;
+        delete item.comprovantePath;
+      }
+      saveState();
+      if (kind === "pessoal") renderPessoal();
+      else if (item.tipo === "mercado") renderMercadoLista();
+      else renderDespesaLista();
+      toast("Foto anexada.");
+    } catch (err) {
+      console.warn(err);
+      toast(err?.message || "Não foi possível anexar a foto.");
+    }
+  }
+
+  function initComprovanteCampos() {
+    ["mercado", "despesa", "pessoal"].forEach((kind) => {
+      const btnCam = $(`#${kind}-foto-camera`);
+      const btnGal = $(`#${kind}-foto-galeria`);
+      const fileCam = $(`#${kind}-foto-cam`);
+      const fileGal = $(`#${kind}-foto`);
+      const limpar = $(`#${kind}-foto-limpar`);
+
+      // Troca .hidden (display:none) por classe que o celular aceita
+      [fileCam, fileGal].forEach((el) => {
+        if (!el) return;
+        el.classList.remove("hidden");
+        el.classList.add("file-input-visually-hidden");
+      });
+
+      const processarArquivo = async (fileEl) => {
+        const chosen = fileEl.files?.[0];
+        if (!chosen) {
+          toast("Nenhuma foto recebida. Tente de novo ou use Galeria.");
+          return;
+        }
+        try {
+          toast("Processando foto…");
+          const blob = await compressImageFile(chosen);
+          pendingComprovante[kind] = blob;
+          comprovanteRemovido[kind] = false;
+          const previewUrl = URL.createObjectURL(blob);
+          mostrarPreviewComprovante(kind, previewUrl);
+          toast("Foto pronta. Salve o lançamento para enviar.");
+        } catch (err) {
+          console.warn(err);
+          pendingComprovante[kind] = null;
+          toast(err?.message || "Não foi possível processar a imagem.");
+        } finally {
+          try {
+            fileEl.value = "";
+          } catch {
+            /* ignore */
+          }
+        }
+      };
+
+      btnCam?.addEventListener("click", (e) => {
+        e.preventDefault();
+        fileCam?.click();
+      });
+      btnGal?.addEventListener("click", (e) => {
+        e.preventDefault();
+        fileGal?.click();
+      });
+      fileCam?.addEventListener("change", () => processarArquivo(fileCam));
+      fileGal?.addEventListener("change", () => processarArquivo(fileGal));
+      limpar?.addEventListener("click", () => {
+        limparComprovanteCampo(kind, { marcarRemovido: true });
+        toast("Foto removida do formulário.");
+      });
+    });
+
+    $("#btn-fechar-comprovante")?.addEventListener("click", () => {
+      $("#modal-comprovante")?.close?.();
+      modalComprovanteCtx = null;
+    });
+    $("#btn-excluir-comprovante")?.addEventListener("click", () => {
+      if (!modalComprovanteCtx?.id) return;
+      removerComprovanteDoItem(modalComprovanteCtx.id, modalComprovanteCtx.kind);
+    });
   }
 
   async function uploadComprovanteImgBB(blob, itemId) {
@@ -1594,132 +1822,6 @@
     });
     root.querySelectorAll(".btn-add-comprovante").forEach((btn) => {
       btn.addEventListener("click", () => anexarComprovanteExistente(btn.dataset.id, btn.dataset.kind));
-    });
-  }
-
-  function escolherOrigemFoto() {
-    return new Promise((resolve) => {
-      const overlay = document.createElement("div");
-      overlay.className = "foto-origem-overlay";
-      overlay.innerHTML = `
-        <div class="foto-origem-sheet" role="dialog" aria-label="Origem da foto">
-          <p class="foto-origem-sheet__titulo">Como deseja anexar?</p>
-          <button type="button" class="btn btn--secondary" data-origem="camera">📷 Câmera</button>
-          <button type="button" class="btn btn--secondary" data-origem="galeria">🖼 Galeria</button>
-          <button type="button" class="btn btn--ghost" data-origem="">Cancelar</button>
-        </div>`;
-      const fechar = (origem) => {
-        overlay.remove();
-        resolve(origem || null);
-      };
-      overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) fechar(null);
-      });
-      overlay.querySelectorAll("[data-origem]").forEach((btn) => {
-        btn.addEventListener("click", () => fechar(btn.dataset.origem || null));
-      });
-      document.body.appendChild(overlay);
-    });
-  }
-
-  function abrirSeletorFoto(usarCamera) {
-    return new Promise((resolve) => {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = "image/*";
-      if (usarCamera) input.capture = "environment";
-      input.addEventListener("change", () => resolve(input.files?.[0] || null));
-      input.addEventListener("cancel", () => resolve(null));
-      input.click();
-    });
-  }
-
-  async function anexarComprovanteExistente(itemId, kind) {
-    const item = resolverItemComprovante(itemId, kind);
-    if (!item) return toast("Lançamento não encontrado.");
-    if (kind === "pessoal") {
-      if (!podeEditarPessoalDe(item.donoId)) return toast("Sem permissão.");
-    } else {
-      if (item.lancadoPorId !== usuarioAtualId) return toast("Só quem lançou pode anexar.");
-      if (!mesEstaAberto(item.mesId)) return toast("Só é possível anexar no mês aberto.");
-    }
-    const origem = await escolherOrigemFoto();
-    if (!origem) return;
-    const file = await abrirSeletorFoto(origem === "camera");
-    if (!file) return;
-    try {
-      if (!imgbbPronto()) {
-        return toast("Configure a chave ImgBB em js/firebase-config.js (veja api.imgbb.com).");
-      }
-      toast("Enviando foto…");
-      const blob = await compressImageFile(file);
-      const result = await uploadComprovante(blob, item.id);
-      if (result.url) {
-        item.comprovanteUrl = result.url;
-        item.comprovantePath = result.path || "";
-        item.comprovanteProvider = result.provider || "imgbb";
-        delete item.comprovanteData;
-      } else if (result.data) {
-        item.comprovanteData = result.data;
-        item.comprovanteProvider = "data";
-        delete item.comprovanteUrl;
-        delete item.comprovantePath;
-      }
-      saveState();
-      if (kind === "pessoal") renderPessoal();
-      else if (item.tipo === "mercado") renderMercadoLista();
-      else renderDespesaLista();
-      toast("Foto anexada.");
-    } catch (err) {
-      console.warn(err);
-      toast(err?.message || "Não foi possível anexar a foto.");
-    }
-  }
-
-  function initComprovanteCampos() {
-    ["mercado", "despesa", "pessoal"].forEach((kind) => {
-      const btnCam = $(`#${kind}-foto-camera`);
-      const btnGal = $(`#${kind}-foto-galeria`);
-      const fileCam = $(`#${kind}-foto-cam`);
-      const fileGal = $(`#${kind}-foto`);
-      const limpar = $(`#${kind}-foto-limpar`);
-
-      const processarArquivo = async (fileEl) => {
-        const chosen = fileEl.files?.[0];
-        if (!chosen) return;
-        try {
-          toast("Processando foto…");
-          const blob = await compressImageFile(chosen);
-          pendingComprovante[kind] = blob;
-          comprovanteRemovido[kind] = false;
-          const previewUrl = URL.createObjectURL(blob);
-          mostrarPreviewComprovante(kind, previewUrl);
-        } catch (err) {
-          console.warn(err);
-          pendingComprovante[kind] = null;
-          toast("Não foi possível processar a imagem.");
-        } finally {
-          fileEl.value = "";
-        }
-      };
-
-      btnCam?.addEventListener("click", () => fileCam?.click());
-      btnGal?.addEventListener("click", () => fileGal?.click());
-      fileCam?.addEventListener("change", () => processarArquivo(fileCam));
-      fileGal?.addEventListener("change", () => processarArquivo(fileGal));
-      limpar?.addEventListener("click", () => {
-        limparComprovanteCampo(kind, { marcarRemovido: true });
-        toast("Foto removida do formulário.");
-      });
-    });
-
-    $("#btn-fechar-comprovante")?.addEventListener("click", () => {
-      $("#modal-comprovante")?.close?.();
-      modalComprovanteCtx = null;
-    });
-    $("#btn-excluir-comprovante")?.addEventListener("click", () => {
-      if (!modalComprovanteCtx?.id) return;
-      removerComprovanteDoItem(modalComprovanteCtx.id, modalComprovanteCtx.kind);
     });
   }
 
