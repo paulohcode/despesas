@@ -8,6 +8,7 @@
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
+  const APP_BUILD = "v56";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -325,17 +326,12 @@
     return [];
   }
 
-  /** Remove base64 gigante do payload da nuvem (mantém URL ImgBB). Evita falha de sync ~1MB+. */
+  /** Remove base64 do payload da nuvem (sempre). Mantém só URL ImgBB. */
   function enxugarItemComprovante(item) {
     if (!item || typeof item !== "object") return item;
     if (!item.comprovanteData) return item;
     const copy = { ...item };
-    if (copy.comprovanteUrl) {
-      delete copy.comprovanteData;
-    } else if (String(copy.comprovanteData).length > 80_000) {
-      // Sem URL e data enorme: não manda para a nuvem (senão o sync quebra)
-      delete copy.comprovanteData;
-    }
+    delete copy.comprovanteData;
     return copy;
   }
 
@@ -502,7 +498,11 @@
       pill.className = `sync-pill sync-pill--${status}`;
       pill.title = detalhe || text;
     }
-    if (cfgStatus) cfgStatus.textContent = detalhe ? `${text} — ${detalhe}` : text;
+    if (cfgStatus) {
+      cfgStatus.textContent = detalhe
+        ? `${text} — ${detalhe} (${APP_BUILD})`
+        : `${text} (${APP_BUILD})`;
+    }
     if (loginStatus) {
       if (!firebasePronto()) {
         loginStatus.textContent = "Firebase não configurado: dados ficam só neste aparelho.";
@@ -738,8 +738,19 @@
       })
       .catch((err) => {
         console.error("pushToCloud:", err);
-        setSyncStatus("error", err.message || "Falha ao enviar");
-        toast("Falha ao salvar na nuvem. Tente de novo com internet.");
+        // Segunda tentativa: payload mínimo (sem notificações longas)
+        const leve = { ...payloadFromState(), notificacoes: [] };
+        return syncRef
+          .set(leve)
+          .then(() => {
+            lastRemoteUpdatedAt = Number(leve.updatedAt) || Date.now();
+            setSyncStatus("online", "Dados sincronizados (compacto)");
+          })
+          .catch((err2) => {
+            console.error("pushToCloud retry:", err2);
+            setSyncStatus("error", err2.message || err.message || "Falha ao enviar");
+            toast("Falha ao salvar na nuvem. Atualize o app (Config deve mostrar v56).");
+          });
       });
   }
 
@@ -6808,10 +6819,10 @@
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
         navigator.serviceWorker
-          .register("./sw.js", { scope: "./" })
+          .register(`./sw.js?v=${APP_BUILD}`, { scope: "./" })
           .then((reg) => {
             reg.update();
-            setInterval(() => reg.update(), 60 * 60 * 1000);
+            setInterval(() => reg.update(), 30 * 60 * 1000);
             reg.addEventListener("updatefound", () => {
               const worker = reg.installing;
               if (!worker) return;
@@ -6824,6 +6835,13 @@
             });
           })
           .catch((err) => console.warn("SW:", err));
+
+        // Força limpeza de caches antigos travados (ex.: v50)
+        caches.keys().then((keys) => {
+          keys
+            .filter((k) => k.startsWith("despesas-") && k !== `despesas-${APP_BUILD}`)
+            .forEach((k) => caches.delete(k));
+        });
       });
 
       let refreshing = false;
