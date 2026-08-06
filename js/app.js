@@ -1268,6 +1268,15 @@
     }
   }
 
+  function imgbbPronto() {
+    const key = String(window.IMGBB_CONFIG?.apiKey || "").trim();
+    return key.length > 10;
+  }
+
+  function imgbbApiKey() {
+    return String(window.IMGBB_CONFIG?.apiKey || "").trim();
+  }
+
   function blobToDataURL(blob) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -1301,21 +1310,37 @@
     }
   }
 
-  async function uploadComprovante(blob, itemId) {
-    const path = `casas/${codigoCasa}/comprovantes/${itemId}_${Date.now()}.jpg`;
-    if (storagePronto() && navigator.onLine && codigoCasa) {
-      try {
-        if (!firebase.apps.length) {
-          firebase.initializeApp(window.FIREBASE_CONFIG);
-        }
-        const ref = firebase.storage().ref(path);
-        await ref.put(blob, { contentType: "image/jpeg" });
-        const url = await ref.getDownloadURL();
-        return { url, path };
-      } catch (err) {
-        console.warn("Upload Storage falhou, usando dataURL:", err);
-      }
+  async function uploadComprovanteImgBB(blob, itemId) {
+    const key = imgbbApiKey();
+    if (!key) throw new Error("Chave ImgBB não configurada.");
+    if (!navigator.onLine) throw new Error("Sem internet para enviar a foto.");
+
+    const form = new FormData();
+    form.append("image", blob, `${itemId || "foto"}.jpg`);
+    form.append("name", `despesa-${itemId || Date.now()}`);
+
+    const res = await fetch(`https://api.imgbb.com/1/upload?key=${encodeURIComponent(key)}`, {
+      method: "POST",
+      body: form,
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || !json?.success || !json?.data) {
+      const msg =
+        json?.error?.message ||
+        json?.status_txt ||
+        `ImgBB recusou o upload (HTTP ${res.status}).`;
+      throw new Error(msg);
     }
+    const url = json.data.display_url || json.data.url || json.data.image?.url;
+    if (!url) throw new Error("ImgBB não retornou URL da imagem.");
+    return {
+      url,
+      path: json.data.delete_url || "",
+      provider: "imgbb",
+    };
+  }
+
+  async function uploadComprovanteDataUrl(blob) {
     let dataUrl = await blobToDataURL(blob);
     if (dataUrl.length > 450_000) {
       const harder = await compressImageFile(blob, 960, 0.55);
@@ -1325,7 +1350,43 @@
       const harder = await compressImageFile(blob, 720, 0.45);
       dataUrl = await blobToDataURL(harder);
     }
-    return { data: dataUrl };
+    if (dataUrl.length > 450_000) {
+      throw new Error("Foto ainda grande demais para salvar sem ImgBB.");
+    }
+    return { data: dataUrl, provider: "data" };
+  }
+
+  async function uploadComprovante(blob, itemId) {
+    // 1) ImgBB (principal — sem Blaze)
+    if (imgbbPronto()) {
+      try {
+        return await uploadComprovanteImgBB(blob, itemId);
+      } catch (err) {
+        console.warn("Upload ImgBB falhou:", err);
+        toast(`ImgBB: ${err?.message || "falha no envio"}. Tentando reserva…`);
+      }
+    } else {
+      console.warn("IMGBB_CONFIG.apiKey vazia — configure em js/firebase-config.js");
+    }
+
+    // 2) Firebase Storage (só se ainda estiver liberado no projeto)
+    const path = `casas/${codigoCasa}/comprovantes/${itemId}_${Date.now()}.jpg`;
+    if (storagePronto() && navigator.onLine && codigoCasa) {
+      try {
+        if (!firebase.apps.length) {
+          firebase.initializeApp(window.FIREBASE_CONFIG);
+        }
+        const ref = firebase.storage().ref(path);
+        await ref.put(blob, { contentType: "image/jpeg" });
+        const url = await ref.getDownloadURL();
+        return { url, path, provider: "firebase" };
+      } catch (err) {
+        console.warn("Upload Storage falhou:", err);
+      }
+    }
+
+    // 3) Último recurso: embutir no Database (pode falhar se o estado ficar grande)
+    return uploadComprovanteDataUrl(blob);
   }
 
   function srcComprovante(item) {
@@ -1396,10 +1457,11 @@
     }
     if (!confirm("Excluir a foto do comprovante?\nVocê poderá tirar outra depois.")) return;
 
-    if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
+    excluirComprovanteRemoto(item);
     delete item.comprovanteUrl;
     delete item.comprovantePath;
     delete item.comprovanteData;
+    delete item.comprovanteProvider;
     saveState();
     $("#modal-comprovante")?.close?.();
     modalComprovanteCtx = null;
@@ -1436,35 +1498,56 @@
   async function aplicarComprovanteNoItem(item, kind) {
     if (!item) return;
     if (pendingComprovante[kind]) {
+      if (!imgbbPronto() && !storagePronto()) {
+        toast("Configure a chave ImgBB em js/firebase-config.js para salvar fotos.");
+      }
       toast("Enviando foto…");
       const oldPath = item.comprovantePath || null;
       const result = await uploadComprovante(pendingComprovante[kind], item.id);
       if (result.url) {
         item.comprovanteUrl = result.url;
-        item.comprovantePath = result.path;
+        item.comprovantePath = result.path || "";
+        item.comprovanteProvider = result.provider || "imgbb";
         delete item.comprovanteData;
       } else if (result.data) {
         item.comprovanteData = result.data;
+        item.comprovanteProvider = "data";
         delete item.comprovanteUrl;
         delete item.comprovantePath;
       }
       if (oldPath && oldPath !== item.comprovantePath) {
-        excluirComprovanteStorage(oldPath);
+        excluirComprovanteRemoto(oldPath);
       }
       return;
     }
     if (comprovanteRemovido[kind]) {
-      if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
+      excluirComprovanteRemoto(item);
       delete item.comprovanteUrl;
       delete item.comprovantePath;
       delete item.comprovanteData;
+      delete item.comprovanteProvider;
       return;
     }
     // Mantém comprovanteExistente / campos já no item
   }
 
-  function excluirComprovanteStorage(path) {
-    if (!path || !storagePronto()) return;
+  function excluirComprovanteRemoto(itemOrPath) {
+    const path =
+      typeof itemOrPath === "string" ? itemOrPath : itemOrPath?.comprovantePath || "";
+    if (!path) return;
+
+    // ImgBB: delete_url (abre exclusão no site — best effort)
+    if (/^https?:\/\//i.test(path)) {
+      try {
+        fetch(path, { method: "GET", mode: "no-cors" }).catch(() => {});
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    // Firebase Storage legado
+    if (!storagePronto()) return;
     try {
       if (!firebase.apps.length) {
         firebase.initializeApp(window.FIREBASE_CONFIG);
@@ -1473,6 +1556,11 @@
     } catch {
       /* best-effort */
     }
+  }
+
+  /** @deprecated use excluirComprovanteRemoto */
+  function excluirComprovanteStorage(path) {
+    excluirComprovanteRemoto(path);
   }
 
   function resolverItemComprovante(id, kind) {
@@ -1560,15 +1648,20 @@
     const file = await abrirSeletorFoto(origem === "camera");
     if (!file) return;
     try {
+      if (!imgbbPronto()) {
+        return toast("Configure a chave ImgBB em js/firebase-config.js (veja api.imgbb.com).");
+      }
       toast("Enviando foto…");
       const blob = await compressImageFile(file);
       const result = await uploadComprovante(blob, item.id);
       if (result.url) {
         item.comprovanteUrl = result.url;
-        item.comprovantePath = result.path;
+        item.comprovantePath = result.path || "";
+        item.comprovanteProvider = result.provider || "imgbb";
         delete item.comprovanteData;
       } else if (result.data) {
         item.comprovanteData = result.data;
+        item.comprovanteProvider = "data";
         delete item.comprovanteUrl;
         delete item.comprovantePath;
       }
@@ -1579,7 +1672,7 @@
       toast("Foto anexada.");
     } catch (err) {
       console.warn(err);
-      toast("Não foi possível anexar a foto.");
+      toast(err?.message || "Não foi possível anexar a foto.");
     }
   }
 

@@ -13,15 +13,10 @@
  *   }
  * }
  *
- * Storage (Storage → Regras) — fotos de comprovante:
- * rules_version = '2';
- * service firebase.storage {
- *   match /b/{bucket}/o {
- *     match /casas/{casa}/comprovantes/{allPaths=**} {
- *       allow read, write: if true;
- *     }
- *   }
- * }
+ * Fotos de comprovante: ImgBB (não usa Firebase Storage / Blaze).
+ * 1) Crie conta em https://imgbb.com
+ * 2) Gere a chave em https://api.imgbb.com/
+ * 3) Cole em IMGBB_CONFIG.apiKey abaixo
  */
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyBqqRe2xqSWQSKhR7lxFO4Wzs8vqIBomr0",
@@ -31,6 +26,11 @@ window.FIREBASE_CONFIG = {
   storageBucket: "despesas-9975a.firebasestorage.app",
   messagingSenderId: "849590406258",
   appId: "1:849590406258:web:3c40c9f8ab817254e746eb",
+};
+
+/** ImgBB — hospedagem das fotos de comprovante (grátis, sem Blaze) */
+window.IMGBB_CONFIG = {
+  apiKey: "bb930da5150db54321d06522cb044456", // cole aqui a chave de https://api.imgbb.com/
 };
 
 /** Chaves Web Push (VAPID) — permitem avisar o celular com o app fechado */
