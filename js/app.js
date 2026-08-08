@@ -8,7 +8,7 @@
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
-  const APP_BUILD = "v63";
+  const APP_BUILD = "v64";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -7128,7 +7128,7 @@
     });
 
     $("#btn-imprimir-encontro")?.addEventListener("click", () => {
-      imprimirAba("print-encontro");
+      imprimirEncontro();
     });
 
     $("#btn-copiar-relatorio")?.addEventListener("click", async () => {
@@ -7139,40 +7139,245 @@
     });
 
     $("#btn-imprimir-relatorio")?.addEventListener("click", () => {
-      imprimirAba("print-relatorio");
+      imprimirRelatorio();
     });
   }
 
+  function limparHtmlParaImpressao(html) {
+    const wrap = document.createElement("div");
+    wrap.innerHTML = html || "";
+    wrap
+      .querySelectorAll(
+        "button, .btn, .export-acoes, .no-print, .relatorio-switch, .acerto-item__acoes, .mercado-item__acoes, form, input, select, textarea"
+      )
+      .forEach((el) => el.remove());
+    return wrap.innerHTML;
+  }
+
+  function montarDocumentoImpressao(titulo, corpoHtml) {
+    const estilo = `
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 16px;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        color: #111;
+        background: #fff;
+        font-size: 14px;
+        line-height: 1.4;
+      }
+      h1 { font-size: 1.25rem; margin: 0 0 0.75rem; }
+      .meta { color: #666; margin: 0 0 1rem; font-size: 0.85rem; }
+      .card-resumo, .card-grupo, .acerto-item, .mercado-item {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        padding: 0.75rem 0.9rem;
+        margin: 0 0 0.55rem;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      .grupos-grid, .resumo, .acerto-lista, .lista-mercado {
+        display: block;
+      }
+      .card-grupo__nome, .card-resumo__label, .acerto-lista__titulo {
+        margin: 0;
+        font-size: 0.78rem;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .card-grupo__valor, .card-resumo__valor, .acerto-item__valor, .mercado-item__valor {
+        margin: 0.2rem 0 0;
+        font-size: 1.15rem;
+        font-weight: 700;
+      }
+      .card-grupo__peso, .card-grupo__origens, .card-resumo__meta,
+      .mercado-item__meta, .mercado-item__por, .mercado-item__detalhe, .detalhe {
+        margin: 0.2rem 0 0;
+        color: #555;
+        font-size: 0.82rem;
+      }
+      .saldo--receber { color: #1a5c4a; }
+      .saldo--pagar { color: #b42318; }
+      .saldo--ok { color: #666; }
+      .acerto-item__fluxo { margin: 0; }
+      .acerto-item__seta { margin: 0 0.35rem; color: #888; }
+      .badge {
+        display: inline-block;
+        padding: 0.1rem 0.4rem;
+        border-radius: 999px;
+        background: #eee;
+        font-size: 0.72rem;
+      }
+      table { width: 100%; border-collapse: collapse; margin-top: 0.75rem; }
+      th, td { border-bottom: 1px solid #e5e5e5; padding: 0.45rem 0.3rem; text-align: left; font-size: 0.85rem; }
+      @page { margin: 12mm; }
+      @media print {
+        body { padding: 0; }
+      }
+    `;
+    return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(titulo)}</title>
+  <style>${estilo}</style>
+</head>
+<body>
+  <h1>${escapeHtml(titulo)}</h1>
+  <p class="meta">Gerado em ${new Date().toLocaleString("pt-BR")}</p>
+  ${corpoHtml}
+</body>
+</html>`;
+  }
+
+  function podeUsarShareNativo() {
+    return typeof navigator.share === "function";
+  }
+
+  function isIosStandalonePwa() {
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent || "");
+    const standalone =
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true;
+    return ios && standalone;
+  }
+
+  async function compartilharTextoImpressao(titulo, texto) {
+    if (!texto) return false;
+    try {
+      if (podeUsarShareNativo()) {
+        await navigator.share({ title: titulo, text: texto });
+        return true;
+      }
+    } catch (err) {
+      if (String(err?.name || "") === "AbortError") return true;
+    }
+    return copiarTexto(texto);
+  }
+
+  function imprimirDocumento(titulo, corpoHtml) {
+    const limpo = limparHtmlParaImpressao(corpoHtml);
+    if (!String(limpo || "").trim()) {
+      toast("Nada para imprimir.");
+      return;
+    }
+
+    // No PWA do iPhone, window.print costuma não existir/funcionar — usa compartilhar
+    if (isIosStandalonePwa()) {
+      const textoPlano = `${titulo}\n\n${(limpo || "")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/p>/gi, "\n")
+        .replace(/<\/div>/gi, "\n")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .replace(/[ \t]{2,}/g, " ")
+        .trim()}`;
+      compartilharTextoImpressao(titulo, textoPlano).then((ok) => {
+        toast(
+          ok
+            ? "Use Compartilhar/Imprimir do iPhone."
+            : "Neste iPhone instalado, use Copiar para WhatsApp."
+        );
+      });
+      return;
+    }
+
+    const html = montarDocumentoImpressao(titulo, limpo);
+
+    // iframe fora da tela (não pode ser 0x0 — quebra no iOS Safari)
+    try {
+      const iframe = document.createElement("iframe");
+      iframe.setAttribute("aria-hidden", "true");
+      iframe.style.cssText =
+        "position:fixed;top:-10000px;left:0;width:1024px;height:1400px;border:0;opacity:0;pointer-events:none;";
+      document.body.appendChild(iframe);
+      const doc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (doc) {
+        doc.open();
+        doc.write(html);
+        doc.close();
+        const win = iframe.contentWindow;
+        const limparIframe = () => {
+          try {
+            iframe.remove();
+          } catch {
+            /* ignore */
+          }
+        };
+        win?.addEventListener?.("afterprint", limparIframe);
+        setTimeout(() => {
+          try {
+            win?.focus?.();
+            win?.print?.();
+            toast("Abrindo impressão…");
+          } catch (err) {
+            console.warn("print iframe:", err);
+            limparIframe();
+            abrirImpressaoEmNovaAba(html);
+          }
+          setTimeout(limparIframe, 5000);
+        }, 250);
+        return;
+      }
+    } catch (err) {
+      console.warn("iframe print:", err);
+    }
+
+    abrirImpressaoEmNovaAba(html);
+  }
+
+  function abrirImpressaoEmNovaAba(html) {
+    try {
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank");
+      if (!win) {
+        URL.revokeObjectURL(url);
+        toast("Permita pop-ups para imprimir, ou use Copiar para WhatsApp.");
+        return;
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      toast("Documento aberto — toque em Imprimir no navegador.");
+    } catch (err) {
+      console.warn("blob print:", err);
+      toast("Não foi possível imprimir neste aparelho. Use Copiar para WhatsApp.");
+    }
+  }
+
+  function imprimirEncontro() {
+    const box = $("#encontro-resultado");
+    if (!box || !box.innerHTML.trim()) return toast("Nada para imprimir.");
+    const mesId = $("#encontro-mes")?.value || mesSelecionado;
+    const titulo = `Encontro de contas — ${mesId ? labelMes(mesId) : "mês"}`;
+    imprimirDocumento(titulo, box.innerHTML);
+  }
+
+  function imprimirRelatorio() {
+    let bloco = null;
+    if (relatorioModo === "vaquinha") bloco = $("#relatorio-vaquinha");
+    else if (relatorioModo === "pendencias") bloco = $("#relatorio-pendencias");
+    else bloco = $("#relatorio-casa");
+
+    if (!bloco || bloco.classList.contains("hidden") || !bloco.innerHTML.trim()) {
+      return toast("Nada para imprimir.");
+    }
+    const modo =
+      relatorioModo === "vaquinha"
+        ? "Vaquinha"
+        : relatorioModo === "pendencias"
+          ? "Entre nós"
+          : "Mercado + Despesas";
+    const titulo = `Relatório — ${modo} — ${mesSelecionado ? labelMes(mesSelecionado) : "mês"}`;
+    imprimirDocumento(titulo, bloco.innerHTML);
+  }
+
   function imprimirAba(classePrint) {
-    if (!classePrint) return;
-    document.body.classList.remove("print-mode", "print-encontro", "print-relatorio");
-    document.body.classList.add("print-mode", classePrint);
-
-    let limpou = false;
-    const limpar = () => {
-      if (limpou) return;
-      limpou = true;
-      document.body.classList.remove("print-mode", "print-encontro", "print-relatorio");
-      window.removeEventListener("afterprint", limpar);
-    };
-
-    window.addEventListener("afterprint", limpar);
-
-    // Espera o CSS aplicar as classes antes de abrir o diálogo
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        try {
-          window.print();
-        } catch (err) {
-          console.warn("print:", err);
-          toast("Não foi possível abrir a impressão neste aparelho.");
-          limpar();
-          return;
-        }
-        // Fallback: alguns celulares/PWA não disparam afterprint
-        setTimeout(limpar, 2500);
-      }, 60);
-    });
+    // Compatibilidade com chamadas antigas
+    if (classePrint === "print-encontro") return imprimirEncontro();
+    if (classePrint === "print-relatorio") return imprimirRelatorio();
   }
 
   function textoLinhasTransferencias(transfers, mesId, escopo) {
