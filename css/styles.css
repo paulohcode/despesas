@@ -1555,6 +1555,15 @@ select {
   color: var(--ink-muted);
 }
 
+.card-grupo__origens {
+  margin: 0.2rem 0 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--ink-muted);
+  font-weight: 500;
+  opacity: 0.92;
+}
+
 .acerto-lista {
   margin-top: 0.85rem;
   display: flex;
@@ -1925,6 +1934,34 @@ select {
   font-size: 0.8rem;
 }
 
+.vaquinha-acerto {
+  margin-top: 0.45rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
+}
+
+.vaquinha-acerto__titulo {
+  margin: 0 0 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.vaquinha-acerto--ok {
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  color: color-mix(in srgb, var(--ink) 70%, transparent);
+}
+
+.vaquinha-acerto__linha {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  margin-top: 0.2rem;
+}
+
 .btn--edit {
   background: color-mix(in srgb, var(--brand-soft) 70%, #fff);
   color: var(--brand-deep);
@@ -2034,48 +2071,90 @@ select {
 }
 
 @media print {
-  body * {
-    visibility: hidden;
+  @page {
+    margin: 12mm;
   }
 
-  body.print-encontro #tab-encontro,
-  body.print-encontro #tab-encontro *,
-  body.print-relatorio #tab-relatorio,
-  body.print-relatorio #tab-relatorio * {
-    visibility: visible;
-  }
-
-  body.print-encontro #tab-encontro,
-  body.print-relatorio #tab-relatorio {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    display: block !important;
-  }
-
-  .no-print,
-  .nav,
-  .header,
-  .export-acoes,
-  .relatorio-switch,
-  form,
-  .aviso {
-    display: none !important;
-  }
-
-  body.print-encontro .btn,
-  body.print-relatorio .btn {
-    display: none !important;
-  }
-
+  html,
   body {
-    background: #fff;
+    background: #fff !important;
+    color: #111 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
-  .panel {
-    box-shadow: none;
-    border: 0;
-    padding: 0;
+  body.print-mode .header,
+  body.print-mode .nav,
+  body.print-mode .mes-status,
+  body.print-mode .push-banner,
+  body.print-mode #tela-login,
+  body.print-mode .export-acoes,
+  body.print-mode .no-print,
+  body.print-mode .relatorio-switch,
+  body.print-mode .aviso,
+  body.print-mode .toast,
+  body.print-mode dialog {
+    display: none !important;
+  }
+
+  /* Esconde formulários de filtro na impressão, mas mantém o resultado */
+  body.print-encontro #tab-encontro > .form,
+  body.print-encontro #tab-encontro > .panel__hint,
+  body.print-relatorio #tab-relatorio > .form,
+  body.print-relatorio #tab-relatorio .relatorio-switch {
+    display: none !important;
+  }
+
+  body.print-encontro .panel:not(#tab-encontro),
+  body.print-relatorio .panel:not(#tab-relatorio) {
+    display: none !important;
+  }
+
+  body.print-encontro #tab-encontro,
+  body.print-encontro #tab-encontro.panel,
+  body.print-encontro #tab-encontro.panel[hidden],
+  body.print-relatorio #tab-relatorio,
+  body.print-relatorio #tab-relatorio.panel,
+  body.print-relatorio #tab-relatorio.panel[hidden] {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #fff !important;
+  }
+
+  body.print-mode .app,
+  body.print-mode .main {
+    display: block !important;
+    visibility: visible !important;
+    height: auto !important;
+    overflow: visible !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  body.print-mode .btn,
+  body.print-mode .btn-notif,
+  body.print-mode .mercado-item__acoes,
+  body.print-mode .acerto-item__acoes {
+    display: none !important;
+  }
+
+  body.print-mode .card-grupo,
+  body.print-mode .card-resumo,
+  body.print-mode .acerto-item,
+  body.print-mode .mercado-item {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 }

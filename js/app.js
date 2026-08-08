@@ -8,7 +8,7 @@
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
-  const APP_BUILD = "v61";
+  const APP_BUILD = "v63";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -1760,7 +1760,131 @@
   }
 
   function vaquinhaEstaPaga(item) {
-    return item?.tipo === "vaquinha" && item.status === "pago";
+    if (!item || item.tipo !== "vaquinha") return false;
+    const acerto = atribuirAcertoVaquinhasDoEncontro(item.mesId)?.[item.id];
+    return !!acerto?.quitada;
+  }
+
+  function chaveParTransferencia(deId, paraId) {
+    return `${deId || ""}→${paraId || ""}`;
+  }
+
+  /** Soma o que já foi marcado como pago no Encontro (por par de pessoas). */
+  function poolQuitacoesEncontroMes(mesId) {
+    const pool = {};
+    (state.encontrosQuitacoes || []).forEach((q) => {
+      if (!q || q.mesId !== mesId) return;
+      if (q.escopo !== "encontro" && q.escopo !== "pessoas") return;
+      const k = chaveParTransferencia(q.deId, q.paraId);
+      pool[k] = (pool[k] || 0) + (Number(q.valor) || 0);
+    });
+    return pool;
+  }
+
+  function saldosInternosVaquinha(item) {
+    const migrada = migrarVaquinha(item);
+    const compras = Array.isArray(migrada.compras) ? migrada.compras : [];
+    const base = (migrada.participantes || [])
+      .map((p) => ({
+        pessoaId: p.pessoaId,
+        nome: p.nome,
+        peso: Number(p.peso) || 1,
+      }))
+      .filter((p) => p.pessoaId);
+    if (compras.length && base.length) {
+      return calcularAcerto(compras, base).map((p) => ({
+        id: p.pessoaId,
+        nome: p.nome,
+        saldo: Number(p.saldo) || 0,
+        pagou: Number(p.pagou) || 0,
+        cota: Number(p.cota) || 0,
+      }));
+    }
+    return (migrada.participantes || [])
+      .filter((p) => p?.pessoaId)
+      .map((p) => ({
+        id: p.pessoaId,
+        nome: p.nome,
+        saldo: Number(p.saldo) || 0,
+        pagou: Number(p.pagou) || 0,
+        cota: Number(p.cota) || 0,
+      }));
+  }
+
+  /**
+   * Cruza o acerto interno de cada vaquinha com as quitações do Encontro.
+   * O pool de pagamentos do mês (por par) cobre as vaquinhas em ordem de data.
+   */
+  function atribuirAcertoVaquinhasDoEncontro(mesId) {
+    const out = {};
+    if (!mesId) return out;
+    const pool = poolQuitacoesEncontroMes(mesId);
+    const vaquinhas = state.lancamentos
+      .filter((l) => l.tipo === "vaquinha" && l.mesId === mesId)
+      .sort((a, b) => {
+        const d = String(a.data || "").localeCompare(String(b.data || ""));
+        if (d) return d;
+        return String(a.criadoEm || "").localeCompare(String(b.criadoEm || ""));
+      });
+
+    vaquinhas.forEach((v) => {
+      const transfers = calcularTransferencias(saldosInternosVaquinha(v));
+      let pago = 0;
+      let falta = 0;
+      const linhas = transfers.map((t) => {
+        const k = chaveParTransferencia(t.deId, t.paraId);
+        const disponivel = pool[k] || 0;
+        const valor = Number(t.valor) || 0;
+        const pagoLinha = Math.min(valor, disponivel);
+        pool[k] = disponivel - pagoLinha;
+        const faltaLinha = valor - pagoLinha;
+        pago += pagoLinha;
+        falta += faltaLinha;
+        return {
+          ...t,
+          pago: pagoLinha,
+          falta: faltaLinha,
+          quitado: faltaLinha < 0.005,
+        };
+      });
+      const total = pago + falta;
+      out[v.id] = {
+        total,
+        pago,
+        falta,
+        transfers: linhas,
+        equilibrada: transfers.length === 0,
+        quitada: transfers.length === 0 || (total > 0.005 && falta < 0.005),
+      };
+    });
+    return out;
+  }
+
+  function htmlAcertoVaquinhaEncontro(acerto) {
+    if (!acerto) return "";
+    if (acerto.equilibrada) {
+      return `<p class="vaquinha-acerto vaquinha-acerto--ok">Sem transferência interna — já equilibrada.</p>`;
+    }
+    const linhas = (acerto.transfers || [])
+      .map((t) => {
+        const st = t.quitado
+          ? `<span class="badge badge--aberto">Pago no encontro</span>`
+          : t.pago > 0.005
+            ? `<span class="badge badge--fechado">Pago ${formatMoney(t.pago)} · falta ${formatMoney(t.falta)}</span>`
+            : `<span class="badge badge--fechado">Falta ${formatMoney(t.falta)}</span>`;
+        return `<div class="vaquinha-acerto__linha"><span>${escapeHtml(t.deNome)} → ${escapeHtml(
+          t.paraNome
+        )}: ${formatMoney(t.valor)}</span> ${st}</div>`;
+      })
+      .join("");
+    const resumo = acerto.quitada
+      ? `Quitada no encontro · ${formatMoney(acerto.pago)}`
+      : `Pago no encontro ${formatMoney(acerto.pago)} · falta acertar ${formatMoney(acerto.falta)}`;
+    return `
+      <div class="vaquinha-acerto">
+        <p class="vaquinha-acerto__titulo">${resumo}</p>
+        ${linhas}
+      </div>`;
   }
 
   function usuarioPodePagarVaquinha(item) {
@@ -2089,63 +2213,6 @@
     renderVaquinhaLista();
     renderRelatorio();
     toast("Comprovante de pagamento excluído.");
-  }
-
-  async function marcarVaquinhaComoPaga(itemId) {
-    const item = state.lancamentos.find((l) => l.id === itemId && l.tipo === "vaquinha");
-    if (!item) return toast("Vaquinha não encontrada.");
-    if (vaquinhaEstaPaga(item)) return toast("Esta vaquinha já está paga.");
-    if (!usuarioPodePagarVaquinha(item)) return toast("Sem permissão.");
-    if (!mesEstaAberto(item.mesId)) return toast("Só é possível pagar no mês aberto.");
-    if (!confirm(`Confirmar pagamento da vaquinha "${item.descricao}"?`)) return;
-
-    const autor = autorMeta();
-    item.status = "pago";
-    item.pagoEm = new Date().toISOString();
-    item.pagoPorId = autor.lancadoPorId;
-    item.pagoPorNome = autor.lancadoPorNome;
-
-    const partIds = (item.participantes || [])
-      .map((p) => p.pessoaId)
-      .filter((id) => id && id !== autor.lancadoPorId);
-    if (partIds.length) {
-      notificar({
-        paraUserIds: partIds,
-        titulo: "Vaquinha paga",
-        texto: `${autor.lancadoPorNome} marcou a vaquinha "${item.descricao}" (${formatMoney(item.valor)}) como paga.`,
-        tipo: "vaquinha",
-        refId: item.id,
-      });
-    }
-    saveState();
-    updateNotifBadge();
-    renderVaquinhaLista();
-    renderRelatorio();
-    renderEncontro();
-    toast("Vaquinha marcada como paga.");
-
-    if (confirm("Deseja anexar o comprovante de pagamento?")) {
-      await anexarComprovantePagamentoVaquinha(item.id);
-    }
-  }
-
-  function reabrirVaquinha(itemId) {
-    const item = state.lancamentos.find((l) => l.id === itemId && l.tipo === "vaquinha");
-    if (!item) return toast("Vaquinha não encontrada.");
-    if (!vaquinhaEstaPaga(item)) return;
-    if (!usuarioPodePagarVaquinha(item)) return toast("Sem permissão.");
-    if (!mesEstaAberto(item.mesId)) return toast("Só é possível reabrir no mês aberto.");
-    if (!confirm(`Reabrir a vaquinha "${item.descricao}" como pendente?`)) return;
-
-    item.status = "pendente";
-    delete item.pagoEm;
-    delete item.pagoPorId;
-    delete item.pagoPorNome;
-    saveState();
-    renderVaquinhaLista();
-    renderRelatorio();
-    renderEncontro();
-    toast("Vaquinha reaberta.");
   }
 
   /* ---------- Notificações ---------- */
@@ -6027,18 +6094,63 @@
     const useCasa = !!opts.casa;
     const useVaq = !!opts.vaquinha;
     const usePend = !!opts.pendencias;
-    const listas = [];
+    const partes = [];
 
     if (useCasa) {
       const casa = state.lancamentos.filter(
         (l) => l.mesId === mesId && (l.tipo === "mercado" || l.tipo === "despesa")
       );
-      listas.push(converterSaldosGruposParaPessoas(calcularSaldosGrupos(casa)));
+      partes.push({
+        key: "casa",
+        label: "Mercado",
+        saldos: converterSaldosGruposParaPessoas(calcularSaldosGrupos(casa)),
+      });
     }
-    if (useVaq) listas.push(calcularSaldosPessoasVaquinha(mesId));
-    if (usePend) listas.push(calcularSaldosPendenciasMes(mesId));
+    if (useVaq) {
+      partes.push({
+        key: "vaquinha",
+        label: "Vaquinha",
+        saldos: calcularSaldosPessoasVaquinha(mesId),
+      });
+    }
+    if (usePend) {
+      partes.push({
+        key: "pendencias",
+        label: "Entre nós",
+        saldos: calcularSaldosPendenciasMes(mesId),
+      });
+    }
 
-    return mergeSaldosPessoas(listas);
+    const merged = mergeSaldosPessoas(partes.map((p) => p.saldos));
+    const EPS = 0.005;
+    return merged.map((s) => {
+      const detalheOrigens = [];
+      partes.forEach((p) => {
+        const row = (p.saldos || []).find((x) => x.id === s.id);
+        const saldo = Number(row?.saldo) || 0;
+        if (Math.abs(saldo) > EPS) {
+          detalheOrigens.push({ key: p.key, label: p.label, saldo });
+        }
+      });
+      return { ...s, detalheOrigens };
+    });
+  }
+
+  function htmlDetalheOrigensSaldo(s) {
+    const det = Array.isArray(s?.detalheOrigens) ? s.detalheOrigens : [];
+    if (det.length < 1) return "";
+    const net = Number(s.saldo) || 0;
+    const partes = det.map((d) => {
+      const v = Math.abs(Number(d.saldo) || 0);
+      const mesmoLado =
+        Math.abs(net) < 0.005 || (net > 0 && d.saldo > 0) || (net < 0 && d.saldo < 0);
+      if (mesmoLado) {
+        return `${formatMoney(v)} de ${escapeHtml(d.label)}`;
+      }
+      const lado = d.saldo > 0 ? "a receber" : "a pagar";
+      return `${formatMoney(v)} ${lado} (${escapeHtml(d.label)})`;
+    });
+    return `<p class="card-grupo__origens">${partes.join(" · ")}</p>`;
   }
 
   /** Minimiza transferências: quem está negativo paga quem está positivo. */
@@ -6123,6 +6235,7 @@
           <div class="card-grupo">
             <p class="card-grupo__nome">${escapeHtml(s.nome)}</p>
             <p class="card-grupo__valor ${t.classe}">${t.texto}</p>
+            ${htmlDetalheOrigensSaldo(s)}
             <p class="card-grupo__peso">Cota ${formatMoney(s.cota)} · Pagou ${formatMoney(s.pagou)}</p>
           </div>`;
           })
@@ -6222,6 +6335,7 @@
     saveState();
     updateNotifBadge();
     renderEncontro();
+    renderVaquinhaLista();
     renderPendencias();
     renderRelatorio();
     toast("Transferência marcada como paga.");
@@ -6237,6 +6351,8 @@
     );
     saveState();
     renderEncontro();
+    renderVaquinhaLista();
+    renderRelatorio();
     toast("Quitação desfeita.");
   }
 
@@ -6621,44 +6737,29 @@
     }
     empty.classList.add("hidden");
 
+    const acertosEncontro = atribuirAcertoVaquinhasDoEncontro(mesId);
+
     box.innerHTML = items
       .map((item) => {
         const meu = item.lancadoPorId && item.lancadoPorId === usuarioAtualId;
         const podeMexer = podeExcluirMes && (meu || isAdmin());
-        const podePagar = podeExcluirMes && usuarioPodePagarVaquinha(item);
-        const paga = vaquinhaEstaPaga(item);
-        const statusBadge = paga
-          ? `<span class="badge badge--aberto">Paga</span>`
-          : `<span class="badge badge--fechado">Pendente</span>`;
+        const acerto = acertosEncontro[item.id];
+        const quitada = !!acerto?.quitada;
+        const statusBadge = quitada
+          ? `<span class="badge badge--aberto">Quitada no encontro</span>`
+          : acerto?.pago > 0.005
+            ? `<span class="badge badge--fechado">Parcial no encontro</span>`
+            : `<span class="badge badge--fechado">Em aberto</span>`;
         const acoes = [];
-        if (podePagar && !paga) {
-          acoes.push(
-            `<button type="button" class="btn btn--primary btn--sm btn-pagar-vaquinha" data-id="${item.id}">Marcar como pago</button>`
-          );
-        }
-        if (paga) {
-          acoes.push(
-            `<span class="detalhe">Paga em ${formatDateTime(item.pagoEm)}${
-              item.pagoPorNome ? ` · ${escapeHtml(item.pagoPorNome)}` : ""
-            }</span>`
-          );
-          if (podePagar) {
-            acoes.push(
-              `<button type="button" class="btn btn--ghost btn--sm btn-reabrir-vaquinha" data-id="${item.id}">Reabrir</button>`
-            );
-          }
-        }
         const fotoBtn = htmlBtnComprovante(item, {
           kind: "lancamento",
           canAdd: !!(meu && podeExcluirMes && !srcComprovante(item)),
           canRemove: !!(meu && podeExcluirMes && srcComprovante(item)),
         });
         if (fotoBtn) acoes.push(fotoBtn);
-        const fotoPagBtn = htmlBtnComprovantePagamento(item, {
-          canAdd: !!(podePagar && paga && !srcComprovantePagamento(item)),
-          canRemove: !!(podePagar && srcComprovantePagamento(item)),
-        });
-        if (fotoPagBtn) acoes.push(fotoPagBtn);
+        acoes.push(
+          `<button type="button" class="btn btn--secondary btn--sm btn-ir-encontro" title="Acertar no Encontro">Encontro</button>`
+        );
         if (podeMexer) {
           acoes.push(
             `<button type="button" class="btn btn--edit btn--sm btn-editar-vaquinha-lista" data-id="${item.id}" title="Editar">✎</button>`
@@ -6673,18 +6774,18 @@
         const comprasHtml = (item.compras || [])
           .map((c) => {
             const src = srcComprovanteCompra(c);
-            const fotoBtn = src
+            const fotoLinha = src
               ? `<button type="button" class="btn btn--ghost btn--sm btn-ver-compra-foto" data-vaq-id="${escapeHtml(
                   item.id
                 )}" data-compra-id="${escapeHtml(c.id)}" title="Ver notinha">📄</button>`
               : "";
             return `<div class="vaquinha-compra-linha">${escapeHtml(c.nome || "—")} · ${formatMoney(
               c.valor
-            )} ${fotoBtn}</div>`;
+            )} ${fotoLinha}</div>`;
           })
           .join("");
         return `
-      <article class="mercado-item ${paga ? "mercado-item--pago" : ""}">
+      <article class="mercado-item ${quitada ? "mercado-item--pago" : ""}">
         <div>
           <p class="mercado-item__meta">${formatDate(item.data)} · ${statusBadge}</p>
           <p class="mercado-item__detalhe">${escapeHtml(item.descricao || "—")}</p>
@@ -6692,6 +6793,7 @@
             comprasHtml || `<p class="mercado-item__por" style="margin-top:0.2rem">—</p>`
           }</div>
           <p class="mercado-item__por" style="margin-top:0.35rem">${parts || "—"}</p>
+          ${htmlAcertoVaquinhaEncontro(acerto)}
         </div>
         <p class="mercado-item__valor">${formatMoney(item.valor)}</p>
         <div class="mercado-item__rodape">
@@ -6715,11 +6817,10 @@
       });
     });
 
-    box.querySelectorAll(".btn-pagar-vaquinha").forEach((btn) => {
-      btn.addEventListener("click", () => marcarVaquinhaComoPaga(btn.dataset.id));
-    });
-    box.querySelectorAll(".btn-reabrir-vaquinha").forEach((btn) => {
-      btn.addEventListener("click", () => reabrirVaquinha(btn.dataset.id));
+    box.querySelectorAll(".btn-ir-encontro").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $$(".nav__btn").find((b) => b.dataset.tab === "encontro")?.click();
+      });
     });
 
     box.querySelectorAll(".btn-editar-vaquinha-lista").forEach((btn) => {
@@ -6902,7 +7003,7 @@
   function calcularSaldosPessoasVaquinha(mesId) {
     const map = {};
     state.lancamentos
-      .filter((l) => l.tipo === "vaquinha" && l.mesId === mesId && l.status !== "pago")
+      .filter((l) => l.tipo === "vaquinha" && l.mesId === mesId)
       .forEach((v) => {
         const migrada = migrarVaquinha(v);
         const compras = Array.isArray(migrada.compras) ? migrada.compras : [];
@@ -7027,8 +7128,7 @@
     });
 
     $("#btn-imprimir-encontro")?.addEventListener("click", () => {
-      document.body.classList.add("print-mode", "print-encontro");
-      window.print();
+      imprimirAba("print-encontro");
     });
 
     $("#btn-copiar-relatorio")?.addEventListener("click", async () => {
@@ -7039,12 +7139,39 @@
     });
 
     $("#btn-imprimir-relatorio")?.addEventListener("click", () => {
-      document.body.classList.add("print-mode", "print-relatorio");
-      window.print();
+      imprimirAba("print-relatorio");
     });
+  }
 
-    window.addEventListener("afterprint", () => {
+  function imprimirAba(classePrint) {
+    if (!classePrint) return;
+    document.body.classList.remove("print-mode", "print-encontro", "print-relatorio");
+    document.body.classList.add("print-mode", classePrint);
+
+    let limpou = false;
+    const limpar = () => {
+      if (limpou) return;
+      limpou = true;
       document.body.classList.remove("print-mode", "print-encontro", "print-relatorio");
+      window.removeEventListener("afterprint", limpar);
+    };
+
+    window.addEventListener("afterprint", limpar);
+
+    // Espera o CSS aplicar as classes antes de abrir o diálogo
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        try {
+          window.print();
+        } catch (err) {
+          console.warn("print:", err);
+          toast("Não foi possível abrir a impressão neste aparelho.");
+          limpar();
+          return;
+        }
+        // Fallback: alguns celulares/PWA não disparam afterprint
+        setTimeout(limpar, 2500);
+      }, 60);
     });
   }
 
@@ -7087,6 +7214,19 @@
     saldos.forEach((s) => {
       const t = textoSaldo(s.saldo);
       linhas.push(`• ${s.nome}: ${t.texto}`);
+      const det = Array.isArray(s.detalheOrigens) ? s.detalheOrigens : [];
+      if (det.length) {
+        const partes = det.map((d) => {
+          const v = Math.abs(Number(d.saldo) || 0);
+          const net = Number(s.saldo) || 0;
+          const mesmoLado =
+            Math.abs(net) < 0.005 || (net > 0 && d.saldo > 0) || (net < 0 && d.saldo < 0);
+          if (mesmoLado) return `${formatMoney(v)} de ${d.label}`;
+          const lado = d.saldo > 0 ? "a receber" : "a pagar";
+          return `${formatMoney(v)} ${lado} (${d.label})`;
+        });
+        linhas.push(`  ${partes.join(" · ")}`);
+      }
     });
     linhas.push("", "*Quem passa pra quem*", ...textoLinhasTransferencias(transfers, mesId, "encontro"));
     return linhas.join("\n").trim();
@@ -7396,7 +7536,8 @@
     const vaquinhas = state.lancamentos
       .filter((l) => l.tipo === "vaquinha" && l.mesId === mesSelecionado)
       .sort((a, b) => b.data.localeCompare(a.data));
-    const abertas = vaquinhas.filter((v) => v.status !== "pago");
+    const acertosEncontro = atribuirAcertoVaquinhasDoEncontro(mesSelecionado);
+    const emAberto = vaquinhas.filter((v) => (acertosEncontro[v.id]?.falta || 0) > 0.005).length;
     const saldos = calcularSaldosPessoasVaquinha(mesSelecionado);
     const transfers = calcularTransferencias(saldos);
     const total = vaquinhas.reduce((acc, v) => acc + (Number(v.valor) || 0), 0);
@@ -7407,14 +7548,14 @@
       <div class="card-resumo">
         <p class="card-resumo__label">Vaquinhas — ${escapeHtml(tituloMes)}</p>
         <p class="card-resumo__valor" style="color:var(--brand)">${formatMoney(total)}</p>
-        <p class="card-resumo__meta">${vaquinhas.length} vaquinha(s) · ${abertas.length} em aberto</p>
+        <p class="card-resumo__meta">${vaquinhas.length} vaquinha(s) · ${emAberto} com acerto em aberto</p>
       </div>` +
       htmlBlocoAcerto({
         titulo: "Acerto das vaquinhas",
-        meta: "Quem passa pra quem só nas vaquinhas ainda em aberto neste mês.",
+        meta: "Quem passa pra quem nas vaquinhas deste mês (quite no Encontro).",
         saldos,
         transfers,
-        vazio: !abertas.length,
+        vazio: !vaquinhas.length,
         mostrarCabecalho: false,
       });
 
@@ -7435,27 +7576,17 @@
           .join(" · ");
         const meu = v.lancadoPorId === usuarioAtualId;
         const podeMexer = podeEditarMes && (meu || isAdmin());
-        const podePagar = podeEditarMes && usuarioPodePagarVaquinha(v);
-        const paga = vaquinhaEstaPaga(v);
-        const statusBadge = paga
-          ? `<span class="badge badge--aberto">Paga</span>`
-          : `<span class="badge badge--fechado">Pendente</span>`;
+        const acerto = acertosEncontro[v.id];
+        const quitada = !!acerto?.quitada;
+        const statusBadge = quitada
+          ? `<span class="badge badge--aberto">Quitada no encontro</span>`
+          : acerto?.pago > 0.005
+            ? `<span class="badge badge--fechado">Parcial no encontro</span>`
+            : `<span class="badge badge--fechado">Em aberto</span>`;
         const acoes = [];
-        if (podePagar && !paga) {
-          acoes.push(
-            `<button type="button" class="btn btn--primary btn--sm btn-pagar-vaquinha" data-id="${v.id}">Marcar como pago</button>`
-          );
-        }
-        if (paga && podePagar) {
-          acoes.push(
-            `<button type="button" class="btn btn--ghost btn--sm btn-reabrir-vaquinha" data-id="${v.id}">Reabrir</button>`
-          );
-        }
-        const fotoPagBtn = htmlBtnComprovantePagamento(v, {
-          canAdd: !!(podePagar && paga && !srcComprovantePagamento(v)),
-          canRemove: !!(podePagar && srcComprovantePagamento(v)),
-        });
-        if (fotoPagBtn) acoes.push(fotoPagBtn);
+        acoes.push(
+          `<button type="button" class="btn btn--secondary btn--sm btn-ir-encontro">Encontro</button>`
+        );
         if (podeMexer) {
           acoes.push(
             `<button type="button" class="btn btn--edit btn--sm btn-editar-vaquinha" data-id="${v.id}" title="Editar">✎</button>`
@@ -7465,7 +7596,7 @@
           );
         }
         return `
-      <article class="mercado-item ${paga ? "mercado-item--pago" : ""}">
+      <article class="mercado-item ${quitada ? "mercado-item--pago" : ""}">
         <div>
           <p class="mercado-item__meta">${formatDate(v.data)} · ${statusBadge}</p>
           <p class="mercado-item__detalhe">${escapeHtml(v.descricao)}</p>
@@ -7483,13 +7614,7 @@
             })
             .join("")}</div>
           <p class="mercado-item__por" style="margin-top:0.25rem">${parts || "—"}</p>
-          ${
-            paga
-              ? `<p class="detalhe" style="margin-top:0.2rem">Paga em ${formatDateTime(v.pagoEm)}${
-                  v.pagoPorNome ? ` · ${escapeHtml(v.pagoPorNome)}` : ""
-                }</p>`
-              : ""
-          }
+          ${htmlAcertoVaquinhaEncontro(acerto)}
         </div>
         <p class="mercado-item__valor">${formatMoney(v.valor)}</p>
         <div class="mercado-item__rodape">
@@ -7499,8 +7624,6 @@
       </article>`;
       })
       .join("");
-
-    wireComprovantePagamentoEvents(lista);
 
     lista.querySelectorAll(".btn-ver-compra-foto").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -7513,11 +7636,10 @@
       });
     });
 
-    lista.querySelectorAll(".btn-pagar-vaquinha").forEach((btn) => {
-      btn.addEventListener("click", () => marcarVaquinhaComoPaga(btn.dataset.id));
-    });
-    lista.querySelectorAll(".btn-reabrir-vaquinha").forEach((btn) => {
-      btn.addEventListener("click", () => reabrirVaquinha(btn.dataset.id));
+    lista.querySelectorAll(".btn-ir-encontro").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $$(".nav__btn").find((b) => b.dataset.tab === "encontro")?.click();
+      });
     });
 
     lista.querySelectorAll(".btn-editar-vaquinha").forEach((btn) => {
@@ -7538,6 +7660,9 @@
         if (!confirm(`Excluir vaquinha "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
         if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
         if (item.comprovantePagamentoPath) excluirComprovanteStorage(item.comprovantePagamentoPath);
+        (item.compras || []).forEach((c) => {
+          if (c?.comprovantePath) excluirComprovanteStorage(c.comprovantePath);
+        });
         if (editingVaquinhaId === item.id) limparEdicaoVaquinha();
         const autor = autorMeta();
         state.lancamentos = state.lancamentos.filter((l) => l.id !== item.id);
