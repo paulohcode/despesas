@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=58" />
+  <link rel="stylesheet" href="css/styles.css?v=61" />
 </head>
 <body>
   <!-- Login -->
@@ -237,7 +237,7 @@
       <!-- Vaquinha -->
       <section id="tab-vaquinha" class="panel" role="tabpanel" hidden>
         <h2 class="panel__title">Vaquinha</h2>
-        <p class="panel__hint">Despesas avulsas entre pessoas. Usuários são cadastrados pelo admin em Config.</p>
+        <p class="panel__hint">Despesas avulsas entre pessoas. Marque como paga quando o acerto for quitado (comprovante opcional).</p>
         <p id="aviso-vaquinha" class="aviso hidden">Abra um mês para lançar vaquinhas.</p>
 
         <form id="form-vaquinha" class="form" autocomplete="off">
@@ -668,7 +668,7 @@
       <!-- Encontro de contas -->
       <section id="tab-encontro" class="panel" role="tabpanel" hidden>
         <h2 class="panel__title">Encontro de contas</h2>
-        <p class="panel__hint">Escolha o que entrar no acerto e veja as transferências para fechar tudo de uma vez.</p>
+        <p class="panel__hint">Soma mercado, despesas, vaquinha e entre nós num saldo líquido — quem deve pra quem depois de compensar tudo.</p>
         <div class="export-acoes no-print">
           <button type="button" id="btn-copiar-encontro" class="btn btn--secondary btn--sm">Copiar para WhatsApp</button>
           <button type="button" id="btn-imprimir-encontro" class="btn btn--ghost btn--sm">Imprimir</button>
@@ -682,7 +682,7 @@
 
           <fieldset class="fieldset">
             <legend class="fieldset__legend">Incluir no encontro</legend>
-            <p class="fieldset__hint">Mercado/despesas acertam entre grupos; vaquinha e entre nós entre pessoas.</p>
+            <p class="fieldset__hint">Tudo entra no mesmo card: os valores se somam e se compensam (ex.: se te devem 1100 e você deve 100, a transferência fica 1000).</p>
             <label class="encontro-check">
               <input type="checkbox" id="enc-casa" checked />
               <span>Mercado + Despesas</span>
@@ -868,7 +868,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
-  <script src="js/firebase-config.js?v=58"></script>
-  <script src="js/app.js?v=58"></script>
+  <script src="js/firebase-config.js?v=61"></script>
+  <script src="js/app.js?v=61"></script>
 </body>
 </html>

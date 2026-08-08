@@ -8,7 +8,7 @@
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
-  const APP_BUILD = "v58";
+  const APP_BUILD = "v61";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -330,9 +330,20 @@
   /** Remove base64 do payload da nuvem (sempre). Mantém só URL ImgBB. */
   function enxugarItemComprovante(item) {
     if (!item || typeof item !== "object") return item;
-    if (!item.comprovanteData) return item;
+    const temDataCompra =
+      Array.isArray(item.compras) && item.compras.some((c) => c && c.comprovanteData);
+    if (!item.comprovanteData && !item.comprovantePagamentoData && !temDataCompra) return item;
     const copy = { ...item };
     delete copy.comprovanteData;
+    delete copy.comprovantePagamentoData;
+    if (Array.isArray(copy.compras)) {
+      copy.compras = copy.compras.map((c) => {
+        if (!c || !c.comprovanteData) return c;
+        const cc = { ...c };
+        delete cc.comprovanteData;
+        return cc;
+      });
+    }
     return copy;
   }
 
@@ -1646,6 +1657,10 @@
     });
     $("#btn-excluir-comprovante")?.addEventListener("click", () => {
       if (!modalComprovanteCtx?.id) return;
+      if (modalComprovanteCtx.kind === "vaquinha-pag") {
+        removerComprovantePagamentoVaquinha(modalComprovanteCtx.id);
+        return;
+      }
       removerComprovanteDoItem(modalComprovanteCtx.id, modalComprovanteCtx.kind);
     });
   }
@@ -1732,6 +1747,58 @@
   function srcComprovante(item) {
     if (!item) return "";
     return item.comprovanteUrl || item.comprovanteData || "";
+  }
+
+  function srcComprovanteCompra(compra) {
+    if (!compra) return "";
+    return compra.comprovanteUrl || compra.comprovanteData || "";
+  }
+
+  function srcComprovantePagamento(item) {
+    if (!item) return "";
+    return item.comprovantePagamentoUrl || item.comprovantePagamentoData || "";
+  }
+
+  function vaquinhaEstaPaga(item) {
+    return item?.tipo === "vaquinha" && item.status === "pago";
+  }
+
+  function usuarioPodePagarVaquinha(item) {
+    const u = usuarioAtual();
+    if (!u || !item || item.tipo !== "vaquinha") return false;
+    if (isAdmin()) return true;
+    if (item.lancadoPorId === u.id) return true;
+    return (item.participantes || []).some((p) => p.pessoaId === u.id);
+  }
+
+  function htmlBtnComprovantePagamento(item, opts = {}) {
+    const canAdd = !!opts.canAdd;
+    const canRemove = !!opts.canRemove;
+    const compact = opts.compact !== false;
+    const parts = [];
+    if (srcComprovantePagamento(item)) {
+      parts.push(
+        `<button type="button" class="btn btn--secondary btn--sm btn-ver-comprovante-pag" data-id="${escapeHtml(
+          item.id
+        )}" data-can-remove="${canRemove ? "1" : "0"}" title="Ver comprovante de pagamento">${
+          compact ? "💳" : "💳 Pag."
+        }</button>`
+      );
+      if (canRemove) {
+        parts.push(
+          `<button type="button" class="btn btn--ghost btn--sm btn-excluir-foto-pag" data-id="${escapeHtml(
+            item.id
+          )}" title="Excluir comprovante de pagamento">${compact ? "🗑" : "🗑 Pag."}</button>`
+        );
+      }
+    } else if (canAdd) {
+      parts.push(
+        `<button type="button" class="btn btn--secondary btn--sm btn-add-comprovante-pag" data-id="${escapeHtml(
+          item.id
+        )}" title="Anexar comprovante de pagamento">${compact ? "📷 Pag." : "📷 Comprovante pag."}</button>`
+      );
+    }
+    return parts.join("");
   }
 
   function htmlBtnComprovante(item, opts = {}) {
@@ -1936,6 +2003,149 @@
     root.querySelectorAll(".btn-add-comprovante").forEach((btn) => {
       btn.addEventListener("click", () => anexarComprovanteExistente(btn.dataset.id, btn.dataset.kind));
     });
+    wireComprovantePagamentoEvents(root);
+  }
+
+  function wireComprovantePagamentoEvents(root) {
+    if (!root) return;
+    root.querySelectorAll(".btn-ver-comprovante-pag").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const item = state.lancamentos.find((l) => l.id === btn.dataset.id && l.tipo === "vaquinha");
+        const src = srcComprovantePagamento(item);
+        if (!src) return toast("Comprovante de pagamento não encontrado.");
+        abrirComprovante(src, {
+          id: btn.dataset.id,
+          kind: "vaquinha-pag",
+          canRemove: btn.dataset.canRemove === "1",
+        });
+      });
+    });
+    root.querySelectorAll(".btn-excluir-foto-pag").forEach((btn) => {
+      btn.addEventListener("click", () => removerComprovantePagamentoVaquinha(btn.dataset.id));
+    });
+    root.querySelectorAll(".btn-add-comprovante-pag").forEach((btn) => {
+      btn.addEventListener("click", () => anexarComprovantePagamentoVaquinha(btn.dataset.id));
+    });
+  }
+
+  async function anexarComprovantePagamentoVaquinha(itemId) {
+    const item = state.lancamentos.find((l) => l.id === itemId && l.tipo === "vaquinha");
+    if (!item) return toast("Vaquinha não encontrada.");
+    if (!usuarioPodePagarVaquinha(item)) return toast("Sem permissão.");
+    if (!mesEstaAberto(item.mesId)) return toast("Só é possível anexar no mês aberto.");
+
+    const file = await escolherOrigemEArquivo();
+    if (!file) return toast("Nenhuma foto selecionada.");
+
+    try {
+      if (!imgbbPronto()) {
+        return toast("Configure a chave ImgBB em js/firebase-config.js (veja api.imgbb.com).");
+      }
+      toast("Enviando comprovante de pagamento…");
+      const blob = await compressImageFile(file);
+      const oldPath = item.comprovantePagamentoPath || null;
+      const result = await uploadComprovante(blob, `${item.id}-pag`);
+      if (result.url) {
+        item.comprovantePagamentoUrl = result.url;
+        item.comprovantePagamentoPath = result.path || "";
+        item.comprovantePagamentoProvider = result.provider || "imgbb";
+        delete item.comprovantePagamentoData;
+      } else if (result.data) {
+        item.comprovantePagamentoData = result.data;
+        item.comprovantePagamentoProvider = "data";
+        delete item.comprovantePagamentoUrl;
+        delete item.comprovantePagamentoPath;
+      }
+      if (oldPath && oldPath !== item.comprovantePagamentoPath) {
+        excluirComprovanteRemoto(oldPath);
+      }
+      saveState();
+      renderVaquinhaLista();
+      renderRelatorio();
+      toast("Comprovante de pagamento anexado.");
+    } catch (err) {
+      console.warn(err);
+      toast(err?.message || "Não foi possível anexar a foto.");
+    }
+  }
+
+  function removerComprovantePagamentoVaquinha(itemId) {
+    const item = state.lancamentos.find((l) => l.id === itemId && l.tipo === "vaquinha");
+    if (!item) return toast("Vaquinha não encontrada.");
+    if (!usuarioPodePagarVaquinha(item) || !mesEstaAberto(item.mesId)) {
+      return toast("Sem permissão para excluir esta foto.");
+    }
+    if (!srcComprovantePagamento(item)) return;
+    if (!confirm("Excluir o comprovante de pagamento?\nVocê poderá anexar outro depois.")) return;
+
+    if (item.comprovantePagamentoPath) excluirComprovanteRemoto(item.comprovantePagamentoPath);
+    delete item.comprovantePagamentoUrl;
+    delete item.comprovantePagamentoPath;
+    delete item.comprovantePagamentoData;
+    delete item.comprovantePagamentoProvider;
+    saveState();
+    $("#modal-comprovante")?.close?.();
+    modalComprovanteCtx = null;
+    renderVaquinhaLista();
+    renderRelatorio();
+    toast("Comprovante de pagamento excluído.");
+  }
+
+  async function marcarVaquinhaComoPaga(itemId) {
+    const item = state.lancamentos.find((l) => l.id === itemId && l.tipo === "vaquinha");
+    if (!item) return toast("Vaquinha não encontrada.");
+    if (vaquinhaEstaPaga(item)) return toast("Esta vaquinha já está paga.");
+    if (!usuarioPodePagarVaquinha(item)) return toast("Sem permissão.");
+    if (!mesEstaAberto(item.mesId)) return toast("Só é possível pagar no mês aberto.");
+    if (!confirm(`Confirmar pagamento da vaquinha "${item.descricao}"?`)) return;
+
+    const autor = autorMeta();
+    item.status = "pago";
+    item.pagoEm = new Date().toISOString();
+    item.pagoPorId = autor.lancadoPorId;
+    item.pagoPorNome = autor.lancadoPorNome;
+
+    const partIds = (item.participantes || [])
+      .map((p) => p.pessoaId)
+      .filter((id) => id && id !== autor.lancadoPorId);
+    if (partIds.length) {
+      notificar({
+        paraUserIds: partIds,
+        titulo: "Vaquinha paga",
+        texto: `${autor.lancadoPorNome} marcou a vaquinha "${item.descricao}" (${formatMoney(item.valor)}) como paga.`,
+        tipo: "vaquinha",
+        refId: item.id,
+      });
+    }
+    saveState();
+    updateNotifBadge();
+    renderVaquinhaLista();
+    renderRelatorio();
+    renderEncontro();
+    toast("Vaquinha marcada como paga.");
+
+    if (confirm("Deseja anexar o comprovante de pagamento?")) {
+      await anexarComprovantePagamentoVaquinha(item.id);
+    }
+  }
+
+  function reabrirVaquinha(itemId) {
+    const item = state.lancamentos.find((l) => l.id === itemId && l.tipo === "vaquinha");
+    if (!item) return toast("Vaquinha não encontrada.");
+    if (!vaquinhaEstaPaga(item)) return;
+    if (!usuarioPodePagarVaquinha(item)) return toast("Sem permissão.");
+    if (!mesEstaAberto(item.mesId)) return toast("Só é possível reabrir no mês aberto.");
+    if (!confirm(`Reabrir a vaquinha "${item.descricao}" como pendente?`)) return;
+
+    item.status = "pendente";
+    delete item.pagoEm;
+    delete item.pagoPorId;
+    delete item.pagoPorNome;
+    saveState();
+    renderVaquinhaLista();
+    renderRelatorio();
+    renderEncontro();
+    toast("Vaquinha reaberta.");
   }
 
   /* ---------- Notificações ---------- */
@@ -3374,6 +3584,13 @@
       const total = compras.reduce((acc, c) => acc + c.valor, 0);
       if (!(total > 0)) return toast("Total inválido.");
 
+      try {
+        await aplicarFotosNasCompras(compras);
+      } catch (err) {
+        console.warn(err);
+        return toast("Não foi possível enviar a notinha de uma compra.");
+      }
+
       const autor = autorMeta();
       const participantes = calcularAcerto(compras, participantesBase);
 
@@ -3427,6 +3644,9 @@
         compras,
         valor: total,
         participantes,
+        status: "pendente",
+        pagoEm: null,
+        pagoPorId: null,
         ...autor,
         criadoEm: new Date().toISOString(),
       };
@@ -5469,18 +5689,41 @@
     );
   }
 
-  function adicionarLinhaCompra(pessoaId = "", valor = "") {
+  function adicionarLinhaCompra(pessoaId = "", valor = "", compraMeta = null) {
     const box = $("#vaquinha-compras");
     const row = document.createElement("div");
     row.className = "compra-row";
+    row.dataset.compraId = compraMeta?.id || uid();
+    row._pendingBlob = null;
+    row._fotoRemovida = false;
+    row._fotoExistente = null;
+    if (compraMeta && (compraMeta.comprovanteUrl || compraMeta.comprovanteData)) {
+      row._fotoExistente = {
+        url: compraMeta.comprovanteUrl || null,
+        path: compraMeta.comprovantePath || null,
+        data: compraMeta.comprovanteData || null,
+        provider: compraMeta.comprovanteProvider || null,
+      };
+    }
     const valorFmt =
       valor === "" || valor == null || !(Number(valor) >= 0)
         ? ""
         : formatMoneyDigits(String(Math.round(Number(valor) * 100)));
     row.innerHTML = `
-      <select class="compra-pessoa" required>${opcoesPessoasHtml(pessoaId)}</select>
-      <input type="text" class="compra-valor input-money" inputmode="numeric" placeholder="0,00" value="${valorFmt}" required />
-      <button type="button" class="btn btn--icon btn-remover-compra" title="Remover" aria-label="Remover">×</button>
+      <div class="compra-row__main">
+        <select class="compra-pessoa" required>${opcoesPessoasHtml(pessoaId)}</select>
+        <input type="text" class="compra-valor input-money" inputmode="numeric" placeholder="0,00" value="${valorFmt}" required />
+        <button type="button" class="btn btn--icon btn-remover-compra" title="Remover" aria-label="Remover">×</button>
+      </div>
+      <div class="compra-row__foto">
+        <span class="compra-row__foto-label">Notinha</span>
+        <button type="button" class="btn btn--secondary btn--sm compra-foto-cam">📷</button>
+        <button type="button" class="btn btn--secondary btn--sm compra-foto-gal">🖼</button>
+        <button type="button" class="btn btn--ghost btn--sm compra-foto-limpar hidden">Remover</button>
+        <input type="file" class="file-input-visually-hidden compra-foto-input-cam" accept="image/*" capture="environment" />
+        <input type="file" class="file-input-visually-hidden compra-foto-input-gal" accept="image/*" />
+        <div class="compra-foto-preview comprovante-preview hidden"><img alt="Notinha da compra" /></div>
+      </div>
     `;
     box.appendChild(row);
     const valorEl = row.querySelector(".compra-valor");
@@ -5494,6 +5737,70 @@
       row.remove();
       atualizarPreviewVaquinha();
     });
+
+    const fileCam = row.querySelector(".compra-foto-input-cam");
+    const fileGal = row.querySelector(".compra-foto-input-gal");
+    const preview = row.querySelector(".compra-foto-preview");
+    const previewImg = preview?.querySelector("img");
+    const btnLimpar = row.querySelector(".compra-foto-limpar");
+
+    const mostrarPreview = (src) => {
+      if (!preview || !previewImg || !src) return;
+      previewImg.src = src;
+      preview.classList.remove("hidden");
+      btnLimpar?.classList.remove("hidden");
+    };
+    const limparPreview = () => {
+      if (previewImg) previewImg.removeAttribute("src");
+      preview?.classList.add("hidden");
+      btnLimpar?.classList.add("hidden");
+    };
+
+    const processar = async (fileEl) => {
+      const chosen = fileEl.files?.[0];
+      if (!chosen) {
+        toast("Nenhuma foto recebida. Tente de novo ou use Galeria.");
+        return;
+      }
+      try {
+        toast("Processando notinha…");
+        const blob = await compressImageFile(chosen);
+        row._pendingBlob = blob;
+        row._fotoRemovida = false;
+        mostrarPreview(URL.createObjectURL(blob));
+        toast("Notinha pronta. Salve a vaquinha para enviar.");
+      } catch (err) {
+        console.warn(err);
+        row._pendingBlob = null;
+        toast(err?.message || "Não foi possível processar a imagem.");
+      } finally {
+        try {
+          fileEl.value = "";
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    row.querySelector(".compra-foto-cam")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      fileCam?.click();
+    });
+    row.querySelector(".compra-foto-gal")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      fileGal?.click();
+    });
+    fileCam?.addEventListener("change", () => processar(fileCam));
+    fileGal?.addEventListener("change", () => processar(fileGal));
+    btnLimpar?.addEventListener("click", () => {
+      row._pendingBlob = null;
+      row._fotoRemovida = true;
+      limparPreview();
+      toast("Notinha removida desta compra.");
+    });
+
+    const srcExistente = srcComprovanteCompra(compraMeta);
+    if (srcExistente) mostrarPreview(srcExistente);
   }
 
   function atualizarOpcoesCompras() {
@@ -5510,10 +5817,65 @@
       const valor = parseMoneyInput(row.querySelector(".compra-valor").value);
       const pessoa = state.pessoas.find((p) => p.id === pessoaId);
       if (pessoa && valor > 0) {
-        compras.push({ id: uid(), pessoaId, nome: pessoa.nome, valor });
+        const compra = {
+          id: row.dataset.compraId || uid(),
+          pessoaId,
+          nome: pessoa.nome,
+          valor,
+        };
+        row.dataset.compraId = compra.id;
+        if (!row._fotoRemovida && row._fotoExistente) {
+          if (row._fotoExistente.url) {
+            compra.comprovanteUrl = row._fotoExistente.url;
+            compra.comprovantePath = row._fotoExistente.path || "";
+            compra.comprovanteProvider = row._fotoExistente.provider || "imgbb";
+          } else if (row._fotoExistente.data) {
+            compra.comprovanteData = row._fotoExistente.data;
+            compra.comprovanteProvider = "data";
+          }
+        }
+        compras.push(compra);
       }
     });
     return compras;
+  }
+
+  async function aplicarFotosNasCompras(compras) {
+    if (!Array.isArray(compras) || !compras.length) return;
+    const rows = $$("#vaquinha-compras .compra-row");
+    for (const compra of compras) {
+      const row = rows.find((r) => r.dataset.compraId === compra.id);
+      if (!row?._pendingBlob) continue;
+      if (!imgbbPronto() && !storagePronto()) {
+        toast("Configure a chave ImgBB em js/firebase-config.js para salvar as notinhas.");
+        continue;
+      }
+      toast(`Enviando notinha de ${compra.nome}…`);
+      const oldPath = compra.comprovantePath || null;
+      const result = await uploadComprovante(row._pendingBlob, compra.id);
+      if (result.url) {
+        compra.comprovanteUrl = result.url;
+        compra.comprovantePath = result.path || "";
+        compra.comprovanteProvider = result.provider || "imgbb";
+        delete compra.comprovanteData;
+      } else if (result.data) {
+        compra.comprovanteData = result.data;
+        compra.comprovanteProvider = "data";
+        delete compra.comprovanteUrl;
+        delete compra.comprovantePath;
+      }
+      if (oldPath && oldPath !== compra.comprovantePath) {
+        excluirComprovanteRemoto(oldPath);
+      }
+      row._pendingBlob = null;
+      row._fotoExistente = {
+        url: compra.comprovanteUrl || null,
+        path: compra.comprovantePath || null,
+        data: compra.comprovanteData || null,
+        provider: compra.comprovanteProvider || null,
+      };
+      row._fotoRemovida = false;
+    }
   }
 
   function calcularAcerto(compras, participantesBase) {
@@ -5604,6 +5966,79 @@
       g.saldo = g.pagou - g.cota;
     });
     return filtrarSaldosAtivos(Object.values(map));
+  }
+
+  /**
+   * Liga um grupo da casa a um usuário cadastrado (para misturar com vaquinha/entre nós).
+   * Usa grupo.pessoaId se existir; senão tenta casar pelo nome no texto do grupo.
+   */
+  function pessoaRepresentanteDoGrupo(grupo) {
+    if (!grupo) return null;
+    if (grupo.pessoaId) {
+      const ligada = (state.pessoas || []).find((p) => p.id === grupo.pessoaId);
+      if (ligada) return ligada;
+    }
+    const gNome = String(grupo.nome || "").trim().toLowerCase();
+    if (!gNome) return null;
+    const candidatos = [...(state.pessoas || [])]
+      .filter((p) => p?.nome)
+      .sort((a, b) => String(b.nome).length - String(a.nome).length);
+    for (const p of candidatos) {
+      const n = String(p.nome).trim().toLowerCase();
+      if (!n || n.length < 2) continue;
+      if (gNome === n) return p;
+      // "paulo / esposa / filhos" → casa com "paulo"
+      if (gNome.startsWith(`${n} `) || gNome.startsWith(`${n}/`) || gNome.startsWith(`${n} /`)) {
+        return p;
+      }
+      // token entre barras: "mãe / joão / avô"
+      const tokens = gNome.split(/[/|,;]+/).map((t) => t.trim()).filter(Boolean);
+      if (tokens.some((t) => t === n || t.startsWith(`${n} `))) return p;
+    }
+    return null;
+  }
+
+  /** Converte saldo de grupos (mercado/despesas) para o mesmo espaço de IDs das pessoas. */
+  function converterSaldosGruposParaPessoas(saldosGrupos) {
+    return (saldosGrupos || []).map((s) => {
+      const grupo =
+        (state.grupos || []).find((g) => g.id === s.id) || { id: s.id, nome: s.nome };
+      const pessoa = pessoaRepresentanteDoGrupo(grupo);
+      if (pessoa) {
+        return {
+          id: pessoa.id,
+          nome: pessoa.nome,
+          pagou: Number(s.pagou) || 0,
+          cota: Number(s.cota) || 0,
+          saldo: Number(s.saldo) || 0,
+        };
+      }
+      return {
+        id: `grupo:${s.id}`,
+        nome: s.nome || "Grupo",
+        pagou: Number(s.pagou) || 0,
+        cota: Number(s.cota) || 0,
+        saldo: Number(s.saldo) || 0,
+      };
+    });
+  }
+
+  function calcularSaldosEncontro(mesId, opts = {}) {
+    const useCasa = !!opts.casa;
+    const useVaq = !!opts.vaquinha;
+    const usePend = !!opts.pendencias;
+    const listas = [];
+
+    if (useCasa) {
+      const casa = state.lancamentos.filter(
+        (l) => l.mesId === mesId && (l.tipo === "mercado" || l.tipo === "despesa")
+      );
+      listas.push(converterSaldosGruposParaPessoas(calcularSaldosGrupos(casa)));
+    }
+    if (useVaq) listas.push(calcularSaldosPessoasVaquinha(mesId));
+    if (usePend) listas.push(calcularSaldosPendenciasMes(mesId));
+
+    return mergeSaldosPessoas(listas);
   }
 
   /** Minimiza transferências: quem está negativo paga quem está positivo. */
@@ -5766,7 +6201,7 @@
       pagoPorNome: u.nome,
     });
 
-    if (escopo === "pessoas") {
+    if (escopo === "pessoas" || escopo === "encontro") {
       const match = (state.pendencias || []).find(
         (p) =>
           p &&
@@ -6098,7 +6533,7 @@
       boxCompras.innerHTML = "";
       const compras = Array.isArray(item.compras) ? item.compras : [];
       if (compras.length) {
-        compras.forEach((c) => adicionarLinhaCompra(c.pessoaId, c.valor));
+        compras.forEach((c) => adicionarLinhaCompra(c.pessoaId, c.valor, c));
       } else {
         adicionarLinhaCompra();
       }
@@ -6190,13 +6625,40 @@
       .map((item) => {
         const meu = item.lancadoPorId && item.lancadoPorId === usuarioAtualId;
         const podeMexer = podeExcluirMes && (meu || isAdmin());
+        const podePagar = podeExcluirMes && usuarioPodePagarVaquinha(item);
+        const paga = vaquinhaEstaPaga(item);
+        const statusBadge = paga
+          ? `<span class="badge badge--aberto">Paga</span>`
+          : `<span class="badge badge--fechado">Pendente</span>`;
         const acoes = [];
+        if (podePagar && !paga) {
+          acoes.push(
+            `<button type="button" class="btn btn--primary btn--sm btn-pagar-vaquinha" data-id="${item.id}">Marcar como pago</button>`
+          );
+        }
+        if (paga) {
+          acoes.push(
+            `<span class="detalhe">Paga em ${formatDateTime(item.pagoEm)}${
+              item.pagoPorNome ? ` · ${escapeHtml(item.pagoPorNome)}` : ""
+            }</span>`
+          );
+          if (podePagar) {
+            acoes.push(
+              `<button type="button" class="btn btn--ghost btn--sm btn-reabrir-vaquinha" data-id="${item.id}">Reabrir</button>`
+            );
+          }
+        }
         const fotoBtn = htmlBtnComprovante(item, {
           kind: "lancamento",
           canAdd: !!(meu && podeExcluirMes && !srcComprovante(item)),
           canRemove: !!(meu && podeExcluirMes && srcComprovante(item)),
         });
         if (fotoBtn) acoes.push(fotoBtn);
+        const fotoPagBtn = htmlBtnComprovantePagamento(item, {
+          canAdd: !!(podePagar && paga && !srcComprovantePagamento(item)),
+          canRemove: !!(podePagar && srcComprovantePagamento(item)),
+        });
+        if (fotoPagBtn) acoes.push(fotoPagBtn);
         if (podeMexer) {
           acoes.push(
             `<button type="button" class="btn btn--edit btn--sm btn-editar-vaquinha-lista" data-id="${item.id}" title="Editar">✎</button>`
@@ -6208,12 +6670,28 @@
         const parts = (item.participantes || [])
           .map((p) => `${escapeHtml(p.nome)}: ${textoSaldo(p.saldo ?? 0).texto}`)
           .join(" · ");
+        const comprasHtml = (item.compras || [])
+          .map((c) => {
+            const src = srcComprovanteCompra(c);
+            const fotoBtn = src
+              ? `<button type="button" class="btn btn--ghost btn--sm btn-ver-compra-foto" data-vaq-id="${escapeHtml(
+                  item.id
+                )}" data-compra-id="${escapeHtml(c.id)}" title="Ver notinha">📄</button>`
+              : "";
+            return `<div class="vaquinha-compra-linha">${escapeHtml(c.nome || "—")} · ${formatMoney(
+              c.valor
+            )} ${fotoBtn}</div>`;
+          })
+          .join("");
         return `
-      <article class="mercado-item">
+      <article class="mercado-item ${paga ? "mercado-item--pago" : ""}">
         <div>
-          <p class="mercado-item__meta">${formatDate(item.data)}</p>
+          <p class="mercado-item__meta">${formatDate(item.data)} · ${statusBadge}</p>
           <p class="mercado-item__detalhe">${escapeHtml(item.descricao || "—")}</p>
-          <p class="mercado-item__por" style="margin-top:0.2rem">${parts || "—"}</p>
+          <div class="vaquinha-compras-resumo">${
+            comprasHtml || `<p class="mercado-item__por" style="margin-top:0.2rem">—</p>`
+          }</div>
+          <p class="mercado-item__por" style="margin-top:0.35rem">${parts || "—"}</p>
         </div>
         <p class="mercado-item__valor">${formatMoney(item.valor)}</p>
         <div class="mercado-item__rodape">
@@ -6225,6 +6703,24 @@
       .join("");
 
     wireComprovanteListEvents(box);
+
+    box.querySelectorAll(".btn-ver-compra-foto").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const item = state.lancamentos.find(
+          (l) => l.id === btn.dataset.vaqId && l.tipo === "vaquinha"
+        );
+        const compra = (item?.compras || []).find((c) => c.id === btn.dataset.compraId);
+        const src = srcComprovanteCompra(compra);
+        if (src) abrirComprovante(src, { canRemove: false });
+      });
+    });
+
+    box.querySelectorAll(".btn-pagar-vaquinha").forEach((btn) => {
+      btn.addEventListener("click", () => marcarVaquinhaComoPaga(btn.dataset.id));
+    });
+    box.querySelectorAll(".btn-reabrir-vaquinha").forEach((btn) => {
+      btn.addEventListener("click", () => reabrirVaquinha(btn.dataset.id));
+    });
 
     box.querySelectorAll(".btn-editar-vaquinha-lista").forEach((btn) => {
       btn.addEventListener("click", () => iniciarEdicaoVaquinha(btn.dataset.id));
@@ -6241,6 +6737,10 @@
         if (!confirm(`Excluir vaquinha "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
 
         if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
+        if (item.comprovantePagamentoPath) excluirComprovanteStorage(item.comprovantePagamentoPath);
+        (item.compras || []).forEach((c) => {
+          if (c?.comprovantePath) excluirComprovanteStorage(c.comprovantePath);
+        });
         if (editingVaquinhaId === item.id) limparEdicaoVaquinha();
         const autor = autorMeta();
         state.lancamentos = state.lancamentos.filter((l) => l.id !== item.id);
@@ -6402,7 +6902,7 @@
   function calcularSaldosPessoasVaquinha(mesId) {
     const map = {};
     state.lancamentos
-      .filter((l) => l.tipo === "vaquinha" && l.mesId === mesId)
+      .filter((l) => l.tipo === "vaquinha" && l.mesId === mesId && l.status !== "pago")
       .forEach((v) => {
         const migrada = migrarVaquinha(v);
         const compras = Array.isArray(migrada.compras) ? migrada.compras : [];
@@ -6565,39 +7065,30 @@
     const usePend = $("#enc-pendencias")?.checked;
     if (!useCasa && !useVaq && !usePend) return "";
 
-    const linhas = [`*Encontro — ${labelMes(mesId)}*`, ""];
     const origens = [
       useCasa ? "Mercado+Despesas" : null,
       useVaq ? "Vaquinha" : null,
       usePend ? "Entre nós" : null,
     ].filter(Boolean);
-    linhas.push(origens.join(" · "), "");
 
-    if (useCasa) {
-      const casa = state.lancamentos.filter(
-        (l) => l.mesId === mesId && (l.tipo === "mercado" || l.tipo === "despesa")
-      );
-      const saldos = calcularSaldosGrupos(casa);
-      const transfers = calcularTransferencias(saldos);
-      linhas.push("*1) Grupos da casa*", ...textoLinhasTransferencias(transfers, mesId, "grupos"), "");
-    }
+    const saldos = calcularSaldosEncontro(mesId, {
+      casa: useCasa,
+      vaquinha: useVaq,
+      pendencias: usePend,
+    });
+    const transfers = calcularTransferencias(saldos);
 
-    if (useVaq || usePend) {
-      const listas = [];
-      if (useVaq) listas.push(calcularSaldosPessoasVaquinha(mesId));
-      if (usePend) listas.push(calcularSaldosPendenciasMes(mesId));
-      const saldosP = mergeSaldosPessoas(listas);
-      const transfersP = calcularTransferencias(saldosP);
-      const fontes = [useVaq ? "vaquinha" : null, usePend ? "entre nós" : null]
-        .filter(Boolean)
-        .join(" + ");
-      linhas.push(
-        `*2) Pessoas (${fontes})*`,
-        ...textoLinhasTransferencias(transfersP, mesId, "pessoas"),
-        ""
-      );
-    }
-
+    const linhas = [
+      `*Encontro — ${labelMes(mesId)}*`,
+      origens.join(" · "),
+      "",
+      "*Saldo líquido (tudo somado)*",
+    ];
+    saldos.forEach((s) => {
+      const t = textoSaldo(s.saldo);
+      linhas.push(`• ${s.nome}: ${t.texto}`);
+    });
+    linhas.push("", "*Quem passa pra quem*", ...textoLinhasTransferencias(transfers, mesId, "encontro"));
     return linhas.join("\n").trim();
   }
 
@@ -6694,61 +7185,28 @@
       return;
     }
 
-    const partes = [];
-    partes.push(`
-      <div class="card-resumo card-resumo--total">
-        <p class="card-resumo__label">Encontro — ${escapeHtml(labelMes(mesId))}</p>
-        <p class="card-resumo__meta">${[
-          useCasa ? "Mercado+Despesas" : null,
-          useVaq ? "Vaquinha" : null,
-          usePend ? "Entre nós" : null,
-        ]
-          .filter(Boolean)
-          .join(" · ")}</p>
-      </div>`);
+    const origens = [
+      useCasa ? "Mercado+Despesas" : null,
+      useVaq ? "Vaquinha" : null,
+      usePend ? "Entre nós" : null,
+    ].filter(Boolean);
 
-    if (useCasa) {
-      const casa = state.lancamentos.filter(
-        (l) => l.mesId === mesId && (l.tipo === "mercado" || l.tipo === "despesa")
-      );
-      const saldos = calcularSaldosGrupos(casa);
-      const transfers = calcularTransferencias(saldos);
-      partes.push(
-        htmlBlocoAcerto({
-          titulo: "1) Grupos da casa (mercado + despesas)",
-          meta: "Transferências entre grupos.",
-          saldos,
-          transfers,
-          vazio: !casa.length,
-          mesId,
-          escopo: "grupos",
-        })
-      );
-    }
+    const saldos = calcularSaldosEncontro(mesId, {
+      casa: useCasa,
+      vaquinha: useVaq,
+      pendencias: usePend,
+    });
+    const transfers = calcularTransferencias(saldos);
 
-    if (useVaq || usePend) {
-      const listas = [];
-      if (useVaq) listas.push(calcularSaldosPessoasVaquinha(mesId));
-      if (usePend) listas.push(calcularSaldosPendenciasMes(mesId));
-      const saldosP = mergeSaldosPessoas(listas);
-      const transfersP = calcularTransferencias(saldosP);
-      const fontes = [useVaq ? "vaquinha" : null, usePend ? "entre nós" : null]
-        .filter(Boolean)
-        .join(" + ");
-      partes.push(
-        htmlBlocoAcerto({
-          titulo: `2) Pessoas (${fontes})`,
-          meta: "Transferências entre usuários para fechar o encontro.",
-          saldos: saldosP,
-          transfers: transfersP,
-          vazio: !saldosP.length,
-          mesId,
-          escopo: "pessoas",
-        })
-      );
-    }
-
-    box.innerHTML = partes.join("");
+    box.innerHTML = htmlBlocoAcerto({
+      titulo: `Encontro — ${labelMes(mesId)}`,
+      meta: `${origens.join(" · ")} · saldo líquido (compensado entre as origens)`,
+      saldos,
+      transfers,
+      vazio: !saldos.length,
+      mesId,
+      escopo: "encontro",
+    });
     bindQuitacaoButtons(box);
   }
 
@@ -6938,6 +7396,7 @@
     const vaquinhas = state.lancamentos
       .filter((l) => l.tipo === "vaquinha" && l.mesId === mesSelecionado)
       .sort((a, b) => b.data.localeCompare(a.data));
+    const abertas = vaquinhas.filter((v) => v.status !== "pago");
     const saldos = calcularSaldosPessoasVaquinha(mesSelecionado);
     const transfers = calcularTransferencias(saldos);
     const total = vaquinhas.reduce((acc, v) => acc + (Number(v.valor) || 0), 0);
@@ -6948,14 +7407,14 @@
       <div class="card-resumo">
         <p class="card-resumo__label">Vaquinhas — ${escapeHtml(tituloMes)}</p>
         <p class="card-resumo__valor" style="color:var(--brand)">${formatMoney(total)}</p>
-        <p class="card-resumo__meta">${vaquinhas.length} vaquinha(s)</p>
+        <p class="card-resumo__meta">${vaquinhas.length} vaquinha(s) · ${abertas.length} em aberto</p>
       </div>` +
       htmlBlocoAcerto({
         titulo: "Acerto das vaquinhas",
-        meta: "Quem passa pra quem só nas vaquinhas deste mês.",
+        meta: "Quem passa pra quem só nas vaquinhas ainda em aberto neste mês.",
         saldos,
         transfers,
-        vazio: !vaquinhas.length,
+        vazio: !abertas.length,
         mostrarCabecalho: false,
       });
 
@@ -6976,25 +7435,90 @@
           .join(" · ");
         const meu = v.lancadoPorId === usuarioAtualId;
         const podeMexer = podeEditarMes && (meu || isAdmin());
-        const acoes = podeMexer
-          ? `<button type="button" class="btn btn--edit btn--sm btn-editar-vaquinha" data-id="${v.id}" title="Editar">✎</button>
-             <button type="button" class="btn btn--ghost btn--sm btn-excluir-vaquinha" data-id="${v.id}">Excluir</button>`
-          : "";
+        const podePagar = podeEditarMes && usuarioPodePagarVaquinha(v);
+        const paga = vaquinhaEstaPaga(v);
+        const statusBadge = paga
+          ? `<span class="badge badge--aberto">Paga</span>`
+          : `<span class="badge badge--fechado">Pendente</span>`;
+        const acoes = [];
+        if (podePagar && !paga) {
+          acoes.push(
+            `<button type="button" class="btn btn--primary btn--sm btn-pagar-vaquinha" data-id="${v.id}">Marcar como pago</button>`
+          );
+        }
+        if (paga && podePagar) {
+          acoes.push(
+            `<button type="button" class="btn btn--ghost btn--sm btn-reabrir-vaquinha" data-id="${v.id}">Reabrir</button>`
+          );
+        }
+        const fotoPagBtn = htmlBtnComprovantePagamento(v, {
+          canAdd: !!(podePagar && paga && !srcComprovantePagamento(v)),
+          canRemove: !!(podePagar && srcComprovantePagamento(v)),
+        });
+        if (fotoPagBtn) acoes.push(fotoPagBtn);
+        if (podeMexer) {
+          acoes.push(
+            `<button type="button" class="btn btn--edit btn--sm btn-editar-vaquinha" data-id="${v.id}" title="Editar">✎</button>`
+          );
+          acoes.push(
+            `<button type="button" class="btn btn--ghost btn--sm btn-excluir-vaquinha" data-id="${v.id}">Excluir</button>`
+          );
+        }
         return `
-      <article class="mercado-item">
+      <article class="mercado-item ${paga ? "mercado-item--pago" : ""}">
         <div>
-          <p class="mercado-item__meta">${formatDate(v.data)}</p>
+          <p class="mercado-item__meta">${formatDate(v.data)} · ${statusBadge}</p>
           <p class="mercado-item__detalhe">${escapeHtml(v.descricao)}</p>
+          <div class="vaquinha-compras-resumo">${(v.compras || [])
+            .map((c) => {
+              const src = srcComprovanteCompra(c);
+              const fotoBtn = src
+                ? `<button type="button" class="btn btn--ghost btn--sm btn-ver-compra-foto" data-vaq-id="${escapeHtml(
+                    v.id
+                  )}" data-compra-id="${escapeHtml(c.id)}" title="Ver notinha">📄</button>`
+                : "";
+              return `<div class="vaquinha-compra-linha">${escapeHtml(c.nome || "—")} · ${formatMoney(
+                c.valor
+              )} ${fotoBtn}</div>`;
+            })
+            .join("")}</div>
           <p class="mercado-item__por" style="margin-top:0.25rem">${parts || "—"}</p>
+          ${
+            paga
+              ? `<p class="detalhe" style="margin-top:0.2rem">Paga em ${formatDateTime(v.pagoEm)}${
+                  v.pagoPorNome ? ` · ${escapeHtml(v.pagoPorNome)}` : ""
+                }</p>`
+              : ""
+          }
         </div>
         <p class="mercado-item__valor">${formatMoney(v.valor)}</p>
         <div class="mercado-item__rodape">
           <p class="mercado-item__por">Por ${escapeHtml(v.lancadoPorNome || "—")}</p>
-          <div class="mercado-item__acoes">${acoes}</div>
+          <div class="mercado-item__acoes">${acoes.join("")}</div>
         </div>
       </article>`;
       })
       .join("");
+
+    wireComprovantePagamentoEvents(lista);
+
+    lista.querySelectorAll(".btn-ver-compra-foto").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const item = state.lancamentos.find(
+          (l) => l.id === btn.dataset.vaqId && l.tipo === "vaquinha"
+        );
+        const compra = (item?.compras || []).find((c) => c.id === btn.dataset.compraId);
+        const src = srcComprovanteCompra(compra);
+        if (src) abrirComprovante(src, { canRemove: false });
+      });
+    });
+
+    lista.querySelectorAll(".btn-pagar-vaquinha").forEach((btn) => {
+      btn.addEventListener("click", () => marcarVaquinhaComoPaga(btn.dataset.id));
+    });
+    lista.querySelectorAll(".btn-reabrir-vaquinha").forEach((btn) => {
+      btn.addEventListener("click", () => reabrirVaquinha(btn.dataset.id));
+    });
 
     lista.querySelectorAll(".btn-editar-vaquinha").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -7013,6 +7537,7 @@
         }
         if (!confirm(`Excluir vaquinha "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
         if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
+        if (item.comprovantePagamentoPath) excluirComprovanteStorage(item.comprovantePagamentoPath);
         if (editingVaquinhaId === item.id) limparEdicaoVaquinha();
         const autor = autorMeta();
         state.lancamentos = state.lancamentos.filter((l) => l.id !== item.id);

@@ -1377,10 +1377,9 @@ select {
 }
 
 .compra-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(5rem, 6.5rem) auto;
-  gap: 0.45rem;
-  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
   padding: 0.55rem;
   background: #fff;
   border: 1px solid var(--line);
@@ -1388,8 +1387,16 @@ select {
   min-width: 0;
 }
 
+.compra-row__main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(5rem, 6.5rem) auto;
+  gap: 0.45rem;
+  align-items: center;
+  min-width: 0;
+}
+
 .compra-row select,
-.compra-row input {
+.compra-row input.compra-valor {
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -1397,6 +1404,50 @@ select {
   border-radius: 8px;
   padding: 0.55rem 0.6rem;
   background: #fff;
+}
+
+.compra-row__foto {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.compra-row__foto-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  margin-right: 0.15rem;
+}
+
+.compra-row .compra-foto-preview {
+  width: 100%;
+  margin-top: 0.15rem;
+}
+
+.compra-row .compra-foto-preview img {
+  max-height: 110px;
+  width: auto;
+  max-width: 100%;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.vaquinha-compras-resumo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.35rem;
+}
+
+.vaquinha-compra-linha {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  font-size: 0.82rem;
+  color: var(--ink-muted);
 }
 
 .participantes {
@@ -1726,15 +1777,15 @@ select {
     display: none;
   }
 
-  .compra-row {
+  .compra-row__main {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .compra-row input[type="number"] {
+  .compra-row__main .compra-valor {
     grid-column: 1 / 2;
   }
 
-  .compra-row .btn--icon {
+  .compra-row__main .btn-remover-compra {
     grid-column: 2 / 3;
     grid-row: 1 / 3;
   }
@@ -1863,6 +1914,15 @@ select {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.35rem;
+}
+
+.mercado-item--pago {
+  opacity: 0.88;
+}
+
+.mercado-item__acoes .detalhe {
+  flex: 1 1 100%;
+  font-size: 0.8rem;
 }
 
 .btn--edit {
