@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=56" />
+  <link rel="stylesheet" href="css/styles.css?v=58" />
 </head>
 <body>
   <!-- Login -->
@@ -242,7 +242,7 @@
 
         <form id="form-vaquinha" class="form" autocomplete="off">
           <fieldset class="fieldset">
-            <legend class="fieldset__legend">Nova vaquinha</legend>
+            <legend class="fieldset__legend" id="vaquinha-form-legend">Nova vaquinha</legend>
             <p class="fieldset__hint">Várias pessoas podem comprar; o acerto mostra quem recebe ou paga.</p>
             <label class="field">
               <span class="field__label">Descrição</span>
@@ -267,9 +267,32 @@
               <p class="peso-total">Soma dos pesos: <strong id="soma-pesos-vaquinha">0</strong></p>
             </div>
             <div id="preview-divisao" class="preview-divisao"></div>
+            <div class="field comprovante-field">
+              <span class="field__label">Comprovante / notinha (opcional)</span>
+              <div class="comprovante-field__row">
+                <button type="button" class="btn btn--secondary btn--sm" id="vaquinha-foto-camera">📷 Câmera</button>
+                <button type="button" class="btn btn--secondary btn--sm" id="vaquinha-foto-galeria">🖼 Galeria</button>
+                <button type="button" class="btn btn--ghost btn--sm hidden" id="vaquinha-foto-limpar">Remover</button>
+              </div>
+              <input type="file" id="vaquinha-foto-cam" class="file-input-visually-hidden" accept="image/*" capture="environment" />
+              <input type="file" id="vaquinha-foto" class="file-input-visually-hidden" accept="image/*" />
+              <div id="vaquinha-foto-preview" class="comprovante-preview hidden">
+                <img alt="Prévia do comprovante" />
+              </div>
+            </div>
           </fieldset>
-          <button type="submit" class="btn btn--primary btn--block">Salvar vaquinha</button>
+          <button type="submit" class="btn btn--primary btn--block" id="btn-salvar-vaquinha">Salvar vaquinha</button>
+          <button type="button" class="btn btn--ghost btn--block hidden" id="btn-cancelar-vaquinha">Cancelar edição</button>
         </form>
+
+        <div id="vaquinha-total" class="mercado-total hidden" aria-live="polite"></div>
+
+        <div class="section-head">
+          <h3 class="section-head__title">Vaquinhas do mês</h3>
+          <span id="vaquinha-count" class="section-head__meta">0</span>
+        </div>
+        <div id="lista-vaquinha" class="lista-mercado"></div>
+        <p id="empty-vaquinha" class="empty empty--sm">Nenhuma vaquinha lançada neste mês.</p>
       </section>
 
       <!-- Entre nós / Pendências -->
@@ -845,7 +868,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
-  <script src="js/firebase-config.js?v=56"></script>
-  <script src="js/app.js?v=56"></script>
+  <script src="js/firebase-config.js?v=58"></script>
+  <script src="js/app.js?v=58"></script>
 </body>
 </html>

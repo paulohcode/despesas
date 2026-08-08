@@ -8,7 +8,7 @@
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
-  const APP_BUILD = "v57";
+  const APP_BUILD = "v58";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -77,6 +77,7 @@
   let pessoalFiltroCategoria = ""; // nome da categoria ou ""
   let editingMercadoId = null;
   let editingDespesaId = null;
+  let editingVaquinhaId = null;
   let editingPessoalId = null;
   let editingReceitaId = null;
   let editingFixaId = null;
@@ -89,9 +90,9 @@
   let lastRemoteUpdatedAt = 0;
   let syncStatus = "offline"; // offline | syncing | online | error | local
   let ignoreRemoteUntil = 0; // evita eco da nuvem sobrescrever save local recente
-  const pendingComprovante = { mercado: null, despesa: null, pessoal: null }; // Blob|null
-  const comprovanteExistente = { mercado: null, despesa: null, pessoal: null }; // {url,path,data}|null when editing
-  const comprovanteRemovido = { mercado: false, despesa: false, pessoal: false };
+  const pendingComprovante = { mercado: null, despesa: null, pessoal: null, vaquinha: null }; // Blob|null
+  const comprovanteExistente = { mercado: null, despesa: null, pessoal: null, vaquinha: null }; // {url,path,data}|null when editing
+  const comprovanteRemovido = { mercado: false, despesa: false, pessoal: false, vaquinha: false };
   let modalComprovanteCtx = null; // { id, kind, canRemove }
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -1572,6 +1573,7 @@
       saveState();
       if (kind === "pessoal") renderPessoal();
       else if (item.tipo === "mercado") renderMercadoLista();
+      else if (item.tipo === "vaquinha") renderVaquinhaLista();
       else renderDespesaLista();
       toast("Foto anexada.");
     } catch (err) {
@@ -1581,7 +1583,7 @@
   }
 
   function initComprovanteCampos() {
-    ["mercado", "despesa", "pessoal"].forEach((kind) => {
+    ["mercado", "despesa", "pessoal", "vaquinha"].forEach((kind) => {
       const btnCam = $(`#${kind}-foto-camera`);
       const btnGal = $(`#${kind}-foto-galeria`);
       const fileCam = $(`#${kind}-foto-cam`);
@@ -1805,6 +1807,7 @@
     modalComprovanteCtx = null;
     renderMercadoLista();
     renderDespesaLista();
+    renderVaquinhaLista();
     renderPessoal();
     renderRelatorio();
     toast("Foto excluída. Use 📷 para tirar outra.");
@@ -3353,7 +3356,7 @@
       toast(`${nome} cadastrado(a).`);
     });
 
-    $("#form-vaquinha").addEventListener("submit", (e) => {
+    $("#form-vaquinha").addEventListener("submit", async (e) => {
       e.preventDefault();
       if (!mesAberto()) return toast("Abra um mês antes de lançar.");
       const descricao = $("#vaquinha-descricao").value.trim();
@@ -3372,6 +3375,49 @@
       if (!(total > 0)) return toast("Total inválido.");
 
       const autor = autorMeta();
+      const participantes = calcularAcerto(compras, participantesBase);
+
+      if (editingVaquinhaId) {
+        const existente = state.lancamentos.find(
+          (l) => l.id === editingVaquinhaId && l.tipo === "vaquinha"
+        );
+        if (!existente) {
+          limparEdicaoVaquinha();
+          return toast("Vaquinha não encontrada.");
+        }
+        if (existente.lancadoPorId !== usuarioAtualId && !isAdmin()) {
+          return toast("Só quem lançou (ou o admin) pode editar.");
+        }
+        if (!mesEstaAberto(existente.mesId)) {
+          return toast("Só é possível editar no mês aberto.");
+        }
+        existente.descricao = descricao;
+        existente.data = data;
+        existente.compras = compras;
+        existente.valor = total;
+        existente.participantes = participantes;
+        try {
+          await aplicarComprovanteNoItem(existente, "vaquinha");
+        } catch (err) {
+          console.warn(err);
+          return toast("Não foi possível enviar a foto.");
+        }
+        notificarTodosExceto(autor.lancadoPorId, {
+          titulo: "Vaquinha editada",
+          texto: `${autor.lancadoPorNome} editou a vaquinha "${descricao}" (${formatMoney(total)}).`,
+          tipo: "vaquinha",
+          refId: existente.id,
+        });
+        saveState();
+        updateNotifBadge();
+        limparEdicaoVaquinha();
+        renderVaquinhaLista();
+        renderRelatorio();
+        renderEncontro();
+        toast("Vaquinha atualizada.");
+        return;
+      }
+
       const item = {
         id: uid(),
         mesId: state.mesAtual,
@@ -3380,10 +3426,16 @@
         data,
         compras,
         valor: total,
-        participantes: calcularAcerto(compras, participantesBase),
+        participantes,
         ...autor,
         criadoEm: new Date().toISOString(),
       };
+      try {
+        await aplicarComprovanteNoItem(item, "vaquinha");
+      } catch (err) {
+        console.warn(err);
+        return toast("Não foi possível enviar a foto.");
+      }
       state.lancamentos.push(item);
       const autorId = autor.lancadoPorId;
       participantesBase.forEach((p) => {
@@ -3399,7 +3451,6 @@
           refId: item.id,
         });
       });
-      // Avisa quem não participa mas está no sistema
       const partSet = new Set(participantesBase.map((p) => p.pessoaId));
       const outros = state.pessoas
         .map((p) => p.id)
@@ -3415,11 +3466,16 @@
       }
       saveState();
       updateNotifBadge();
-      e.target.reset();
-      $("#vaquinha-data").value = todayISO();
-      $("#vaquinha-compras").innerHTML = "";
-      renderVaquinhaUI();
+      limparEdicaoVaquinha();
+      renderVaquinhaLista();
+      renderRelatorio();
+      renderEncontro();
       toast("Vaquinha salva.");
+    });
+
+    $("#btn-cancelar-vaquinha")?.addEventListener("click", () => {
+      limparEdicaoVaquinha();
+      toast("Edição cancelada.");
     });
 
     $("#btn-add-compra").addEventListener("click", () => {
@@ -5945,6 +6001,7 @@
       $("#soma-pesos-vaquinha").textContent = "0";
       $("#total-compras-vaquinha").textContent = formatMoney(0);
       $("#preview-divisao").innerHTML = "";
+      renderVaquinhaLista();
       updateMesStatus();
       return;
     }
@@ -5999,7 +6056,210 @@
     else atualizarOpcoesCompras();
 
     atualizarPreviewVaquinha();
+    renderVaquinhaLista();
     updateMesStatus();
+  }
+
+  function limparEdicaoVaquinha() {
+    editingVaquinhaId = null;
+    limparComprovanteCampo("vaquinha");
+    const form = $("#form-vaquinha");
+    form?.reset();
+    if ($("#vaquinha-data")) $("#vaquinha-data").value = todayISO();
+    if ($("#vaquinha-compras")) $("#vaquinha-compras").innerHTML = "";
+    const legend = $("#vaquinha-form-legend");
+    if (legend) legend.textContent = "Nova vaquinha";
+    setEditModeButtons(
+      "#btn-salvar-vaquinha",
+      "#btn-cancelar-vaquinha",
+      false,
+      "Salvar vaquinha",
+      "Salvar alterações"
+    );
+    renderVaquinhaUI();
+  }
+
+  function iniciarEdicaoVaquinha(id) {
+    const item = state.lancamentos.find((l) => l.id === id && l.tipo === "vaquinha");
+    if (!item) return;
+    if (item.lancadoPorId !== usuarioAtualId && !isAdmin()) {
+      return toast("Só quem lançou (ou o admin) pode editar.");
+    }
+    if (!mesEstaAberto(item.mesId)) return toast("Só é possível editar no mês aberto.");
+
+    editingVaquinhaId = item.id;
+    limparComprovanteCampo("vaquinha");
+
+    if ($("#vaquinha-descricao")) $("#vaquinha-descricao").value = item.descricao || "";
+    if ($("#vaquinha-data")) $("#vaquinha-data").value = item.data || todayISO();
+
+    const boxCompras = $("#vaquinha-compras");
+    if (boxCompras) {
+      boxCompras.innerHTML = "";
+      const compras = Array.isArray(item.compras) ? item.compras : [];
+      if (compras.length) {
+        compras.forEach((c) => adicionarLinhaCompra(c.pessoaId, c.valor));
+      } else {
+        adicionarLinhaCompra();
+      }
+    }
+
+    renderVaquinhaUI();
+
+    const pesosPorId = {};
+    (item.participantes || []).forEach((p) => {
+      if (p?.pessoaId) pesosPorId[p.pessoaId] = p.peso || 1;
+    });
+    $$("#vaquinha-participantes .chk-participante").forEach((chk) => {
+      const peso = pesosPorId[chk.dataset.id];
+      const marcado = peso != null;
+      chk.checked = marcado;
+      const sel = $(`#vaquinha-participantes .sel-peso[data-id="${chk.dataset.id}"]`);
+      if (sel) {
+        sel.disabled = !marcado;
+        if (marcado) sel.value = String(Math.min(4, Math.max(1, Number(peso) || 1)));
+        else sel.value = "1";
+      }
+    });
+    atualizarPreviewVaquinha();
+
+    const src = srcComprovante(item);
+    if (src) {
+      comprovanteExistente.vaquinha = {
+        url: item.comprovanteUrl || null,
+        path: item.comprovantePath || null,
+        data: item.comprovanteData || null,
+      };
+      comprovanteRemovido.vaquinha = false;
+      mostrarPreviewComprovante("vaquinha", src);
+    }
+
+    const legend = $("#vaquinha-form-legend");
+    if (legend) legend.textContent = "Editar vaquinha";
+    setEditModeButtons(
+      "#btn-salvar-vaquinha",
+      "#btn-cancelar-vaquinha",
+      true,
+      "Salvar vaquinha",
+      "Salvar alterações"
+    );
+    updateMesStatus();
+    $("#form-vaquinha")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function renderVaquinhaLista() {
+    const box = $("#lista-vaquinha");
+    const empty = $("#empty-vaquinha");
+    const totalBox = $("#vaquinha-total");
+    const countEl = $("#vaquinha-count");
+    if (!box || !empty) return;
+
+    const mesId = state.mesAtual || mesSelecionado;
+    const podeExcluirMes = mesEstaAberto(mesId);
+    const items = state.lancamentos
+      .filter((l) => l.tipo === "vaquinha" && l.mesId === mesId)
+      .sort((a, b) => {
+        if (a.data === b.data) return (b.criadoEm || "").localeCompare(a.criadoEm || "");
+        return b.data.localeCompare(a.data);
+      });
+
+    const total = items.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
+    if (countEl) countEl.textContent = String(items.length);
+
+    if (totalBox) {
+      if (!items.length) {
+        totalBox.classList.add("hidden");
+        totalBox.innerHTML = "";
+      } else {
+        totalBox.classList.remove("hidden");
+        const mesLabel = mesId ? labelMes(mesId) : "mês";
+        totalBox.innerHTML = `
+          <p class="mercado-total__label">Total vaquinhas · ${escapeHtml(mesLabel)}</p>
+          <p class="mercado-total__valor">${formatMoney(total)}</p>`;
+      }
+    }
+
+    if (!items.length) {
+      box.innerHTML = "";
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+
+    box.innerHTML = items
+      .map((item) => {
+        const meu = item.lancadoPorId && item.lancadoPorId === usuarioAtualId;
+        const podeMexer = podeExcluirMes && (meu || isAdmin());
+        const acoes = [];
+        const fotoBtn = htmlBtnComprovante(item, {
+          kind: "lancamento",
+          canAdd: !!(meu && podeExcluirMes && !srcComprovante(item)),
+          canRemove: !!(meu && podeExcluirMes && srcComprovante(item)),
+        });
+        if (fotoBtn) acoes.push(fotoBtn);
+        if (podeMexer) {
+          acoes.push(
+            `<button type="button" class="btn btn--edit btn--sm btn-editar-vaquinha-lista" data-id="${item.id}" title="Editar">✎</button>`
+          );
+          acoes.push(
+            `<button type="button" class="btn btn--ghost btn--sm btn-excluir-vaquinha-lista" data-id="${item.id}">Excluir</button>`
+          );
+        }
+        const parts = (item.participantes || [])
+          .map((p) => `${escapeHtml(p.nome)}: ${textoSaldo(p.saldo ?? 0).texto}`)
+          .join(" · ");
+        return `
+      <article class="mercado-item">
+        <div>
+          <p class="mercado-item__meta">${formatDate(item.data)}</p>
+          <p class="mercado-item__detalhe">${escapeHtml(item.descricao || "—")}</p>
+          <p class="mercado-item__por" style="margin-top:0.2rem">${parts || "—"}</p>
+        </div>
+        <p class="mercado-item__valor">${formatMoney(item.valor)}</p>
+        <div class="mercado-item__rodape">
+          <p class="mercado-item__por">Por ${escapeHtml(item.lancadoPorNome || "—")}</p>
+          <div class="mercado-item__acoes">${acoes.join("")}</div>
+        </div>
+      </article>`;
+      })
+      .join("");
+
+    wireComprovanteListEvents(box);
+
+    box.querySelectorAll(".btn-editar-vaquinha-lista").forEach((btn) => {
+      btn.addEventListener("click", () => iniciarEdicaoVaquinha(btn.dataset.id));
+    });
+
+    box.querySelectorAll(".btn-excluir-vaquinha-lista").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const item = state.lancamentos.find((l) => l.id === btn.dataset.id && l.tipo === "vaquinha");
+        if (!item) return;
+        if (!mesEstaAberto(item.mesId)) return toast("Só é possível excluir no mês aberto.");
+        if (item.lancadoPorId !== usuarioAtualId && !isAdmin()) {
+          return toast("Só quem lançou (ou o admin) pode excluir.");
+        }
+        if (!confirm(`Excluir vaquinha "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
+
+        if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
+        if (editingVaquinhaId === item.id) limparEdicaoVaquinha();
+        const autor = autorMeta();
+        state.lancamentos = state.lancamentos.filter((l) => l.id !== item.id);
+        notificarTodosExceto(autor.lancadoPorId, {
+          titulo: "Vaquinha excluída",
+          texto: `${autor.lancadoPorNome} excluiu a vaquinha "${item.descricao}" (${formatMoney(item.valor)}).`,
+          tipo: "exclusao",
+          refId: item.id,
+        });
+        saveState();
+        clearTimeout(pushTimer);
+        pushToCloud();
+        updateNotifBadge();
+        renderVaquinhaLista();
+        renderRelatorio();
+        renderEncontro();
+        toast("Vaquinha excluída.");
+      });
+    });
   }
 
   function coletarParticipantes() {
@@ -6642,6 +6902,9 @@
         } else if (tipo === "despesa") {
           $$(".nav__btn").find((b) => b.dataset.tab === "despesas")?.click();
           iniciarEdicaoDespesa(btn.dataset.id);
+        } else if (tipo === "vaquinha") {
+          $$(".nav__btn").find((b) => b.dataset.tab === "vaquinha")?.click();
+          iniciarEdicaoVaquinha(btn.dataset.id);
         }
       });
     });
@@ -6664,6 +6927,7 @@
         renderRelatorio();
         renderMercadoLista();
         renderDespesaLista();
+        renderVaquinhaLista();
         renderEncontro();
         toast("Excluído.");
       });
@@ -6734,37 +6998,8 @@
 
     lista.querySelectorAll(".btn-editar-vaquinha").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const item = state.lancamentos.find((l) => l.id === btn.dataset.id && l.tipo === "vaquinha");
-        if (!item) return;
-        if (!mesEstaAberto(item.mesId)) return toast("Só é possível editar no mês aberto.");
-        if (item.lancadoPorId !== usuarioAtualId && !isAdmin()) {
-          return toast("Só quem lançou (ou o admin) pode editar.");
-        }
-        const novaDesc = prompt("Descrição da vaquinha:", item.descricao || "");
-        if (novaDesc == null) return;
-        const desc = novaDesc.trim();
-        if (!desc) return toast("Descrição inválida.");
-        const novaData = prompt("Data (AAAA-MM-DD):", item.data || todayISO());
-        if (novaData == null) return;
-        const data = novaData.trim();
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return toast("Data inválida.");
-        if (data.slice(0, 7) !== item.mesId) {
-          return toast(`A data deve pertencer a ${labelMes(item.mesId)}.`);
-        }
-        item.descricao = desc;
-        item.data = data;
-        const autor = autorMeta();
-        notificarTodosExceto(autor.lancadoPorId, {
-          titulo: "Vaquinha editada",
-          texto: `${autor.lancadoPorNome} editou a vaquinha "${desc}".`,
-          tipo: "vaquinha",
-          refId: item.id,
-        });
-        saveState();
-        updateNotifBadge();
-        renderRelatorio();
-        renderEncontro();
-        toast("Vaquinha atualizada.");
+        $$(".nav__btn").find((b) => b.dataset.tab === "vaquinha")?.click();
+        iniciarEdicaoVaquinha(btn.dataset.id);
       });
     });
 
@@ -6777,6 +7012,8 @@
           return toast("Só quem lançou (ou o admin) pode excluir.");
         }
         if (!confirm(`Excluir vaquinha "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
+        if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
+        if (editingVaquinhaId === item.id) limparEdicaoVaquinha();
         const autor = autorMeta();
         state.lancamentos = state.lancamentos.filter((l) => l.id !== item.id);
         notificarTodosExceto(autor.lancadoPorId, {
@@ -6786,7 +7023,10 @@
           refId: item.id,
         });
         saveState();
+        clearTimeout(pushTimer);
+        pushToCloud();
         updateNotifBadge();
+        renderVaquinhaLista();
         renderRelatorio();
         renderEncontro();
         toast("Vaquinha excluída.");
