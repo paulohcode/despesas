@@ -8,7 +8,7 @@
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
-  const APP_BUILD = "v64";
+  const APP_BUILD = "v65";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -1555,6 +1555,9 @@
     if (!item) return toast("Lançamento não encontrado.");
     if (kind === "pessoal") {
       if (!podeEditarPessoalDe(item.donoId)) return toast("Sem permissão.");
+    } else if (item.tipo === "vaquinha") {
+      if (!usuarioPodeEditarVaquinha(item)) return toast("Só participantes podem anexar.");
+      if (!mesEstaAberto(item.mesId)) return toast("Só é possível anexar no mês aberto.");
     } else {
       if (item.lancadoPorId !== usuarioAtualId) return toast("Só quem lançou pode anexar.");
       if (!mesEstaAberto(item.mesId)) return toast("Só é possível anexar no mês aberto.");
@@ -1895,6 +1898,19 @@
     return (item.participantes || []).some((p) => p.pessoaId === u.id);
   }
 
+  /** Admin, quem lançou ou qualquer participante pode editar. */
+  function usuarioPodeEditarVaquinha(item) {
+    return usuarioPodePagarVaquinha(item);
+  }
+
+  /** Só quem lançou ou o admin pode excluir. */
+  function usuarioPodeExcluirVaquinha(item) {
+    const u = usuarioAtual();
+    if (!u || !item || item.tipo !== "vaquinha") return false;
+    if (isAdmin()) return true;
+    return item.lancadoPorId === u.id;
+  }
+
   function htmlBtnComprovantePagamento(item, opts = {}) {
     const canAdd = !!opts.canAdd;
     const canRemove = !!opts.canRemove;
@@ -1975,9 +1991,10 @@
   function podeRemoverComprovanteItem(item, kind) {
     if (!item || !srcComprovante(item)) return false;
     if (kind === "pessoal") return podeEditarPessoalDe(item.donoId);
-    return (
-      item.lancadoPorId === usuarioAtualId && mesEstaAberto(item.mesId)
-    );
+    if (item.tipo === "vaquinha") {
+      return usuarioPodeEditarVaquinha(item) && mesEstaAberto(item.mesId);
+    }
+    return item.lancadoPorId === usuarioAtualId && mesEstaAberto(item.mesId);
   }
 
   function removerComprovanteDoItem(itemId, kind) {
@@ -3669,8 +3686,8 @@
           limparEdicaoVaquinha();
           return toast("Vaquinha não encontrada.");
         }
-        if (existente.lancadoPorId !== usuarioAtualId && !isAdmin()) {
-          return toast("Só quem lançou (ou o admin) pode editar.");
+        if (!usuarioPodeEditarVaquinha(existente)) {
+          return toast("Só participantes da vaquinha (ou o admin) podem editar.");
         }
         if (!mesEstaAberto(existente.mesId)) {
           return toast("Só é possível editar no mês aberto.");
@@ -6633,8 +6650,8 @@
   function iniciarEdicaoVaquinha(id) {
     const item = state.lancamentos.find((l) => l.id === id && l.tipo === "vaquinha");
     if (!item) return;
-    if (item.lancadoPorId !== usuarioAtualId && !isAdmin()) {
-      return toast("Só quem lançou (ou o admin) pode editar.");
+    if (!usuarioPodeEditarVaquinha(item)) {
+      return toast("Só participantes da vaquinha (ou o admin) podem editar.");
     }
     if (!mesEstaAberto(item.mesId)) return toast("Só é possível editar no mês aberto.");
 
@@ -6741,8 +6758,8 @@
 
     box.innerHTML = items
       .map((item) => {
-        const meu = item.lancadoPorId && item.lancadoPorId === usuarioAtualId;
-        const podeMexer = podeExcluirMes && (meu || isAdmin());
+        const podeEditar = podeExcluirMes && usuarioPodeEditarVaquinha(item);
+        const podeExcluir = podeExcluirMes && usuarioPodeExcluirVaquinha(item);
         const acerto = acertosEncontro[item.id];
         const quitada = !!acerto?.quitada;
         const statusBadge = quitada
@@ -6753,17 +6770,19 @@
         const acoes = [];
         const fotoBtn = htmlBtnComprovante(item, {
           kind: "lancamento",
-          canAdd: !!(meu && podeExcluirMes && !srcComprovante(item)),
-          canRemove: !!(meu && podeExcluirMes && srcComprovante(item)),
+          canAdd: !!(podeEditar && !srcComprovante(item)),
+          canRemove: !!(podeEditar && srcComprovante(item)),
         });
         if (fotoBtn) acoes.push(fotoBtn);
         acoes.push(
           `<button type="button" class="btn btn--secondary btn--sm btn-ir-encontro" title="Acertar no Encontro">Encontro</button>`
         );
-        if (podeMexer) {
+        if (podeEditar) {
           acoes.push(
             `<button type="button" class="btn btn--edit btn--sm btn-editar-vaquinha-lista" data-id="${item.id}" title="Editar">✎</button>`
           );
+        }
+        if (podeExcluir) {
           acoes.push(
             `<button type="button" class="btn btn--ghost btn--sm btn-excluir-vaquinha-lista" data-id="${item.id}">Excluir</button>`
           );
@@ -6832,7 +6851,7 @@
         const item = state.lancamentos.find((l) => l.id === btn.dataset.id && l.tipo === "vaquinha");
         if (!item) return;
         if (!mesEstaAberto(item.mesId)) return toast("Só é possível excluir no mês aberto.");
-        if (item.lancadoPorId !== usuarioAtualId && !isAdmin()) {
+        if (!usuarioPodeExcluirVaquinha(item)) {
           return toast("Só quem lançou (ou o admin) pode excluir.");
         }
         if (!confirm(`Excluir vaquinha "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
@@ -7779,8 +7798,8 @@
         const parts = (v.participantes || [])
           .map((p) => `${escapeHtml(p.nome)}: ${textoSaldo(p.saldo ?? 0).texto}`)
           .join(" · ");
-        const meu = v.lancadoPorId === usuarioAtualId;
-        const podeMexer = podeEditarMes && (meu || isAdmin());
+        const podeEditar = podeEditarMes && usuarioPodeEditarVaquinha(v);
+        const podeExcluir = podeEditarMes && usuarioPodeExcluirVaquinha(v);
         const acerto = acertosEncontro[v.id];
         const quitada = !!acerto?.quitada;
         const statusBadge = quitada
@@ -7792,10 +7811,12 @@
         acoes.push(
           `<button type="button" class="btn btn--secondary btn--sm btn-ir-encontro">Encontro</button>`
         );
-        if (podeMexer) {
+        if (podeEditar) {
           acoes.push(
             `<button type="button" class="btn btn--edit btn--sm btn-editar-vaquinha" data-id="${v.id}" title="Editar">✎</button>`
           );
+        }
+        if (podeExcluir) {
           acoes.push(
             `<button type="button" class="btn btn--ghost btn--sm btn-excluir-vaquinha" data-id="${v.id}">Excluir</button>`
           );
@@ -7859,7 +7880,7 @@
         const item = state.lancamentos.find((l) => l.id === btn.dataset.id && l.tipo === "vaquinha");
         if (!item) return;
         if (!mesEstaAberto(item.mesId)) return toast("Só é possível excluir no mês aberto.");
-        if (item.lancadoPorId !== usuarioAtualId && !isAdmin()) {
+        if (!usuarioPodeExcluirVaquinha(item)) {
           return toast("Só quem lançou (ou o admin) pode excluir.");
         }
         if (!confirm(`Excluir vaquinha "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
