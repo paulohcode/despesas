@@ -1056,6 +1056,146 @@ select {
   white-space: nowrap;
 }
 
+.lista-dividas {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.divida-viewers {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 9rem;
+  overflow-y: auto;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.divida-viewers__item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.88rem;
+}
+
+.divida-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.75rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.divida-item__topo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.divida-item__titulo {
+  margin: 0;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.divida-item__meta {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+}
+
+.divida-item__saldos {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.divida-item__saldo {
+  padding: 0.4rem 0.45rem;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--line);
+  min-width: 0;
+}
+
+.divida-item__saldo-label {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.divida-item__saldo-valor {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.divida-item__saldo-valor--resta {
+  color: var(--danger);
+}
+
+.divida-item__saldo-valor--pago {
+  color: var(--brand);
+}
+
+.divida-item__acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.divida-item__pagamentos {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--line);
+}
+
+.divida-pag-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--line);
+  font-size: 0.82rem;
+}
+
+.divida-pag-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.55rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--brand-soft) 35%, #fff);
+  border: 1px solid color-mix(in srgb, var(--brand) 18%, transparent);
+}
+
+.divida-pag-form.hidden {
+  display: none;
+}
+
+.divida-acompanhando {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
 .card-grupo__nome {
   margin: 0;
   font-size: 0.8rem;

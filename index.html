@@ -487,6 +487,49 @@
           <p id="empty-pessoal-fixas" class="empty empty--sm">Nenhuma despesa fixa cadastrada.</p>
         </details>
 
+        <details id="pessoal-bloco-dividas" class="pessoal-acordeon" data-acordeon="lancar">
+          <summary class="pessoal-acordeon__summary">
+            Dívidas
+            <span id="pessoal-dividas-meta" class="section-head__meta" style="margin-left:0.35rem"></span>
+          </summary>
+          <p class="fieldset__hint" style="margin:0.75rem 0">
+            Empréstimo, financiamento, cartão etc. Registre o valor total, os pagamentos (com data e comprovante) e quem pode acompanhar com você.
+          </p>
+          <form id="form-pessoal-divida" class="form" autocomplete="off">
+            <label class="field">
+              <span class="field__label">Descrição</span>
+              <input type="text" id="divida-descricao" placeholder="Ex: Financiamento carro, Empréstimo banco" required />
+            </label>
+            <label class="field">
+              <span class="field__label">Tipo</span>
+              <select id="divida-tipo" required>
+                <option value="Empréstimo">Empréstimo</option>
+                <option value="Financiamento">Financiamento</option>
+                <option value="Cartão">Cartão</option>
+                <option value="Consórcio">Consórcio</option>
+                <option value="Outro">Outro</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="field__label">Valor total da dívida (R$)</span>
+              <input type="text" class="input-money" id="divida-valor" inputmode="numeric" placeholder="0,00" required />
+            </label>
+            <label class="field">
+              <span class="field__label">Data de início</span>
+              <input type="date" id="divida-data" required />
+            </label>
+            <div class="field">
+              <span class="field__label">Quem pode acompanhar</span>
+              <p class="fieldset__hint" style="margin:0 0 0.4rem">Marque usuários do sistema que verão esta dívida e poderão registrar pagamentos.</p>
+              <div id="divida-viewers" class="divida-viewers"></div>
+            </div>
+            <button type="submit" class="btn btn--primary btn--block" id="btn-salvar-divida">Cadastrar dívida</button>
+            <button type="button" class="btn btn--ghost btn--block hidden" id="btn-cancelar-divida">Cancelar edição</button>
+          </form>
+          <div id="lista-pessoal-dividas" class="lista-dividas" style="margin-top:0.85rem"></div>
+          <p id="empty-pessoal-dividas" class="empty empty--sm">Nenhuma dívida cadastrada.</p>
+        </details>
+
         <details id="pessoal-cadastros" class="pessoal-acordeon" data-acordeon="lancar">
           <summary class="pessoal-acordeon__summary">Cadastros da lista</summary>
           <p class="fieldset__hint" style="margin:0.75rem 0 1rem">Toque em cada item para expandir.</p>

@@ -8,7 +8,7 @@
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
-  const APP_BUILD = "v65";
+  const APP_BUILD = "v66";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -81,6 +81,8 @@
   let editingPessoalId = null;
   let editingReceitaId = null;
   let editingFixaId = null;
+  let editingDividaId = null;
+  const pendingDividaPagFoto = new Map(); // dividaId -> Blob
   let deferredInstallPrompt = null;
   let toastTimer = null;
   let syncRef = null;
@@ -202,6 +204,10 @@
         pessoalDespesasFixas: Array.isArray(parsed.pessoalDespesasFixas)
           ? parsed.pessoalDespesasFixas
           : [],
+        pessoalDividas: Array.isArray(parsed.pessoalDividas) ? parsed.pessoalDividas : [],
+        pessoalDividaPagamentos: Array.isArray(parsed.pessoalDividaPagamentos)
+          ? parsed.pessoalDividaPagamentos
+          : [],
         encontrosQuitacoes: Array.isArray(parsed.encontrosQuitacoes)
           ? parsed.encontrosQuitacoes
           : [],
@@ -232,6 +238,8 @@
       pessoalCategorias: [],
       pessoalPagamentos: [],
       pessoalDespesasFixas: [],
+      pessoalDividas: [],
+      pessoalDividaPagamentos: [],
       encontrosQuitacoes: [],
       notificacoes: [],
       updatedAt: 0,
@@ -370,6 +378,8 @@
       pessoalCategorias: asArray(payload.pessoalCategorias),
       pessoalPagamentos: asArray(payload.pessoalPagamentos),
       pessoalDespesasFixas: asArray(payload.pessoalDespesasFixas),
+      pessoalDividas: asArray(payload.pessoalDividas),
+      pessoalDividaPagamentos: enxugarLista(payload.pessoalDividaPagamentos),
       encontrosQuitacoes: asArray(payload.encontrosQuitacoes),
       notificacoes: asArray(payload.notificacoes),
     };
@@ -384,6 +394,8 @@
       asArray(s.pessoais).length * 2 +
       asArray(s.pessoalReceitas).length * 2 +
       asArray(s.pessoalDespesasFixas).length +
+      asArray(s.pessoalDividas).length +
+      asArray(s.pessoalDividaPagamentos).length +
       asArray(s.encontrosQuitacoes).length +
       meses.length * 3 +
       meses.filter((m) => m && m.status === "fechado").length * 5 +
@@ -547,6 +559,8 @@
       pessoalCategorias: asArray(state.pessoalCategorias),
       pessoalPagamentos: asArray(state.pessoalPagamentos),
       pessoalDespesasFixas: asArray(state.pessoalDespesasFixas),
+      pessoalDividas: asArray(state.pessoalDividas),
+      pessoalDividaPagamentos: enxugarLista(state.pessoalDividaPagamentos),
       encontrosQuitacoes: asArray(state.encontrosQuitacoes),
       notificacoes: asArray(state.notificacoes).slice(0, 120),
     };
@@ -603,6 +617,8 @@
         pessoalCategorias: asArray(payload.pessoalCategorias),
         pessoalPagamentos: asArray(payload.pessoalPagamentos),
         pessoalDespesasFixas: asArray(payload.pessoalDespesasFixas),
+        pessoalDividas: asArray(payload.pessoalDividas),
+        pessoalDividaPagamentos: asArray(payload.pessoalDividaPagamentos),
         encontrosQuitacoes: asArray(payload.encontrosQuitacoes),
         notificacoes: asArray(payload.notificacoes),
         updatedAt: remoteAt || Date.now(),
@@ -1555,6 +1571,9 @@
     if (!item) return toast("Lançamento não encontrado.");
     if (kind === "pessoal") {
       if (!podeEditarPessoalDe(item.donoId)) return toast("Sem permissão.");
+    } else if (kind === "divida-pag") {
+      const divida = (state.pessoalDividas || []).find((d) => d.id === item.dividaId);
+      if (!podeRegistrarPagamentoDivida(divida)) return toast("Sem permissão.");
     } else if (item.tipo === "vaquinha") {
       if (!usuarioPodeEditarVaquinha(item)) return toast("Só participantes podem anexar.");
       if (!mesEstaAberto(item.mesId)) return toast("Só é possível anexar no mês aberto.");
@@ -1586,6 +1605,7 @@
       }
       saveState();
       if (kind === "pessoal") renderPessoal();
+      else if (kind === "divida-pag") renderPessoal();
       else if (item.tipo === "mercado") renderMercadoLista();
       else if (item.tipo === "vaquinha") renderVaquinhaLista();
       else renderDespesaLista();
@@ -1991,6 +2011,10 @@
   function podeRemoverComprovanteItem(item, kind) {
     if (!item || !srcComprovante(item)) return false;
     if (kind === "pessoal") return podeEditarPessoalDe(item.donoId);
+    if (kind === "divida-pag") {
+      const divida = (state.pessoalDividas || []).find((d) => d.id === item.dividaId);
+      return podeRegistrarPagamentoDivida(divida);
+    }
     if (item.tipo === "vaquinha") {
       return usuarioPodeEditarVaquinha(item) && mesEstaAberto(item.mesId);
     }
@@ -2115,6 +2139,9 @@
   function resolverItemComprovante(id, kind) {
     if (kind === "pessoal") {
       return (state.pessoais || []).find((p) => p.id === id) || null;
+    }
+    if (kind === "divida-pag") {
+      return (state.pessoalDividaPagamentos || []).find((p) => p.id === id) || null;
     }
     return state.lancamentos.find((l) => l.id === id) || null;
   }
@@ -3981,6 +4008,11 @@
     (state.pessoalAcessos || []).forEach((a) => {
       if (a.viewerId === u.id) ids.add(a.donoId);
     });
+    (state.pessoalDividas || []).forEach((d) => {
+      if (!d || d.ativo === false) return;
+      if (d.donoId === u.id) return;
+      if ((d.viewers || []).some((v) => v && v.id === u.id)) ids.add(d.donoId);
+    });
     return state.pessoas
       .filter((p) => ids.has(p.id))
       .sort((a, b) => {
@@ -4001,6 +4033,15 @@
     state.pessoalCategorias = (state.pessoalCategorias || []).filter((c) => c.donoId !== pessoaId);
     state.pessoalPagamentos = (state.pessoalPagamentos || []).filter((p) => p.donoId !== pessoaId);
     state.pessoalDespesasFixas = (state.pessoalDespesasFixas || []).filter((f) => f.donoId !== pessoaId);
+    state.pessoalDividas = (state.pessoalDividas || [])
+      .filter((d) => d.donoId !== pessoaId)
+      .map((d) => ({
+        ...d,
+        viewers: (d.viewers || []).filter((v) => v && v.id !== pessoaId),
+      }));
+    state.pessoalDividaPagamentos = (state.pessoalDividaPagamentos || []).filter(
+      (p) => p.donoId !== pessoaId
+    );
   }
 
   function listaCadastroPessoal(chave, donoId) {
@@ -4601,6 +4642,473 @@
     toast("Despesa fixa removida.");
   }
 
+  function podeVerDivida(divida) {
+    const u = usuarioAtual();
+    if (!u || !divida || divida.ativo === false) return false;
+    if (isAdmin() || divida.donoId === u.id) return true;
+    return (divida.viewers || []).some((v) => v && v.id === u.id);
+  }
+
+  function podeGerenciarDivida(divida) {
+    const u = usuarioAtual();
+    if (!u || !divida) return false;
+    return isAdmin() || divida.donoId === u.id;
+  }
+
+  function podeRegistrarPagamentoDivida(divida) {
+    return podeVerDivida(divida);
+  }
+
+  function idsAcompanhantesDivida(divida, excetoId = null) {
+    if (!divida) return [];
+    const ids = new Set([divida.donoId]);
+    (divida.viewers || []).forEach((v) => {
+      if (v?.id) ids.add(v.id);
+    });
+    if (excetoId) ids.delete(excetoId);
+    return [...ids].filter(Boolean);
+  }
+
+  function totalPagoDivida(dividaId) {
+    return (state.pessoalDividaPagamentos || [])
+      .filter((p) => p && p.dividaId === dividaId)
+      .reduce((s, p) => s + (Number(p.valor) || 0), 0);
+  }
+
+  function saldoDivida(divida) {
+    const total = Number(divida?.valorTotal) || 0;
+    const pago = totalPagoDivida(divida?.id);
+    return {
+      total,
+      pago,
+      resta: Math.max(0, total - pago),
+    };
+  }
+
+  function listaPagamentosDivida(dividaId) {
+    return (state.pessoalDividaPagamentos || [])
+      .filter((p) => p && p.dividaId === dividaId)
+      .sort((a, b) => String(b.data || "").localeCompare(String(a.data || "")));
+  }
+
+  function listaDividasVisiveis(donoId) {
+    return (state.pessoalDividas || [])
+      .filter((d) => d && d.donoId === donoId && d.ativo !== false && podeVerDivida(d))
+      .sort((a, b) => String(b.dataInicio || b.criadoEm || "").localeCompare(String(a.dataInicio || a.criadoEm || "")));
+  }
+
+  function viewersSelecionadosDoForm() {
+    return $$("#divida-viewers input[type=checkbox]:checked")
+      .map((el) => {
+        const p = state.pessoas.find((x) => x.id === el.value);
+        return p ? { id: p.id, nome: p.nome } : null;
+      })
+      .filter(Boolean);
+  }
+
+  function fillDividaViewers(selecionados = []) {
+    const box = $("#divida-viewers");
+    if (!box) return;
+    const u = usuarioAtual();
+    if (!u) {
+      box.innerHTML = `<p class="fieldset__hint">Faça login.</p>`;
+      return;
+    }
+    const selecionadosIds = new Set(
+      (selecionados || []).map((v) => (typeof v === "string" ? v : v?.id)).filter(Boolean)
+    );
+    const pessoas = (state.pessoas || [])
+      .filter((p) => p.id !== u.id)
+      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+    if (!pessoas.length) {
+      box.innerHTML = `<p class="fieldset__hint">Nenhum outro usuário cadastrado.</p>`;
+      return;
+    }
+    box.innerHTML = pessoas
+      .map(
+        (p) => `
+      <label class="divida-viewers__item">
+        <input type="checkbox" value="${escapeHtml(p.id)}" ${selecionadosIds.has(p.id) ? "checked" : ""} />
+        <span>${escapeHtml(p.nome)}</span>
+      </label>`
+      )
+      .join("");
+  }
+
+  function limparEdicaoDivida() {
+    editingDividaId = null;
+    const form = $("#form-pessoal-divida");
+    form?.reset();
+    const dataEl = $("#divida-data");
+    if (dataEl) dataEl.value = todayISO();
+    fillDividaViewers([]);
+    setEditModeButtons(
+      "#btn-salvar-divida",
+      "#btn-cancelar-divida",
+      false,
+      "Cadastrar dívida",
+      "Salvar alterações"
+    );
+  }
+
+  function iniciarEdicaoDivida(dividaId) {
+    const divida = (state.pessoalDividas || []).find((d) => d.id === dividaId);
+    if (!divida) return;
+    if (!podeGerenciarDivida(divida)) return toast("Sem permissão.");
+    editingDividaId = divida.id;
+    pessoalDonoId = divida.donoId;
+    fillPessoalListaSelect();
+    $("#divida-descricao").value = divida.descricao || "";
+    $("#divida-tipo").value = divida.tipo || "Outro";
+    setMoneyInput("#divida-valor", divida.valorTotal);
+    $("#divida-data").value = divida.dataInicio || todayISO();
+    fillDividaViewers(divida.viewers || []);
+    setEditModeButtons(
+      "#btn-salvar-divida",
+      "#btn-cancelar-divida",
+      true,
+      "Cadastrar dívida",
+      "Salvar alterações"
+    );
+    const bloco = $("#pessoal-bloco-dividas");
+    if (bloco) bloco.open = true;
+    $$('#tab-pessoal details[data-acordeon="lancar"]').forEach((other) => {
+      if (other !== bloco) other.open = false;
+    });
+    $("#form-pessoal-divida")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function excluirDivida(dividaId) {
+    const divida = (state.pessoalDividas || []).find((d) => d.id === dividaId);
+    if (!divida) return;
+    if (!podeGerenciarDivida(divida)) return toast("Sem permissão.");
+    if (
+      !confirm(
+        `Excluir a dívida "${divida.descricao}" e todos os pagamentos registrados?`
+      )
+    ) {
+      return;
+    }
+    const pags = listaPagamentosDivida(divida.id);
+    pags.forEach((p) => excluirComprovanteRemoto(p));
+    state.pessoalDividaPagamentos = (state.pessoalDividaPagamentos || []).filter(
+      (p) => p.dividaId !== divida.id
+    );
+    state.pessoalDividas = (state.pessoalDividas || []).filter((d) => d.id !== divida.id);
+    pendingDividaPagFoto.delete(divida.id);
+    const outros = idsAcompanhantesDivida(divida, usuarioAtualId);
+    if (outros.length) {
+      notificar({
+        paraUserIds: outros,
+        titulo: "Dívida removida",
+        texto: `${usuarioAtual()?.nome || "Alguém"} removeu a dívida "${divida.descricao}".`,
+        tipo: "pessoal",
+        refId: divida.id,
+      });
+    }
+    saveState();
+    updateNotifBadge();
+    renderPessoal();
+    toast("Dívida excluída.");
+  }
+
+  async function registrarPagamentoDivida(dividaId, formEl) {
+    const u = usuarioAtual();
+    if (!u) return toast("Faça login.");
+    const divida = (state.pessoalDividas || []).find((d) => d.id === dividaId);
+    if (!divida) return toast("Dívida não encontrada.");
+    if (!podeRegistrarPagamentoDivida(divida)) return toast("Sem permissão.");
+
+    const valor = parseMoneyInput(formEl.querySelector(".divida-pag-valor")?.value || "");
+    const data = formEl.querySelector(".divida-pag-data")?.value || "";
+    const observacao = (formEl.querySelector(".divida-pag-obs")?.value || "").trim();
+    if (!(valor > 0) || !data) return toast("Informe valor e data do pagamento.");
+
+    const item = {
+      id: uid(),
+      dividaId: divida.id,
+      donoId: divida.donoId,
+      valor,
+      data,
+      observacao: observacao || "",
+      criadoPorId: u.id,
+      criadoPorNome: u.nome,
+      criadoEm: new Date().toISOString(),
+    };
+
+    const blob = pendingDividaPagFoto.get(divida.id) || null;
+    if (blob) {
+      try {
+        if (!imgbbPronto()) {
+          return toast("Configure a chave ImgBB em js/firebase-config.js (veja api.imgbb.com).");
+        }
+        toast("Enviando comprovante…");
+        const result = await uploadComprovante(blob, item.id);
+        if (result.url) {
+          item.comprovanteUrl = result.url;
+          item.comprovantePath = result.path || "";
+          item.comprovanteProvider = result.provider || "imgbb";
+        } else if (result.data) {
+          item.comprovanteData = result.data;
+          item.comprovanteProvider = "data";
+        }
+      } catch (err) {
+        console.warn(err);
+        return toast(err?.message || "Não foi possível enviar o comprovante.");
+      }
+    }
+
+    if (!Array.isArray(state.pessoalDividaPagamentos)) state.pessoalDividaPagamentos = [];
+    state.pessoalDividaPagamentos.unshift(item);
+    pendingDividaPagFoto.delete(divida.id);
+
+    const outros = idsAcompanhantesDivida(divida, u.id);
+    if (outros.length) {
+      const sal = saldoDivida(divida);
+      notificar({
+        paraUserIds: outros,
+        titulo: "Pagamento de dívida",
+        texto: `${u.nome} registrou ${formatMoney(valor)} em "${divida.descricao}". Resta ${formatMoney(sal.resta)}.`,
+        tipo: "pessoal",
+        refId: item.id,
+      });
+    }
+
+    saveState();
+    updateNotifBadge();
+    renderPessoal();
+    toast("Pagamento registrado.");
+  }
+
+  function excluirPagamentoDivida(pagId) {
+    const u = usuarioAtual();
+    if (!u) return toast("Faça login.");
+    const pag = (state.pessoalDividaPagamentos || []).find((p) => p.id === pagId);
+    if (!pag) return;
+    const divida = (state.pessoalDividas || []).find((d) => d.id === pag.dividaId);
+    if (!podeRegistrarPagamentoDivida(divida)) return toast("Sem permissão.");
+    if (
+      !confirm(
+        `Excluir o pagamento de ${formatMoney(pag.valor)} em ${formatDate(pag.data)}?`
+      )
+    ) {
+      return;
+    }
+    excluirComprovanteRemoto(pag);
+    state.pessoalDividaPagamentos = (state.pessoalDividaPagamentos || []).filter(
+      (p) => p.id !== pag.id
+    );
+    const outros = idsAcompanhantesDivida(divida, u.id);
+    if (outros.length) {
+      notificar({
+        paraUserIds: outros,
+        titulo: "Pagamento de dívida removido",
+        texto: `${u.nome} removeu um pagamento de ${formatMoney(pag.valor)} em "${divida.descricao}".`,
+        tipo: "pessoal",
+        refId: pag.id,
+      });
+    }
+    saveState();
+    updateNotifBadge();
+    renderPessoal();
+    toast("Pagamento removido.");
+  }
+
+  function renderPessoalDividas(donoId, souDono) {
+    const box = $("#lista-pessoal-dividas");
+    const empty = $("#empty-pessoal-dividas");
+    const meta = $("#pessoal-dividas-meta");
+    const form = $("#form-pessoal-divida");
+    if (!box || !empty) return;
+
+    form?.classList.toggle("hidden", !souDono);
+
+    const dividas = listaDividasVisiveis(donoId);
+    const totalResta = dividas.reduce((s, d) => s + saldoDivida(d).resta, 0);
+    if (meta) {
+      meta.textContent = dividas.length
+        ? `${dividas.length} · resta ${formatMoney(totalResta)}`
+        : "";
+    }
+
+    if (!dividas.length) {
+      box.innerHTML = "";
+      empty.textContent = souDono
+        ? "Nenhuma dívida cadastrada."
+        : "Nenhuma dívida compartilhada com você nesta lista.";
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+
+    box.innerHTML = dividas
+      .map((d) => {
+        const sal = saldoDivida(d);
+        const podeGerir = podeGerenciarDivida(d);
+        const podePag = podeRegistrarPagamentoDivida(d);
+        const viewersNomes = (d.viewers || [])
+          .map((v) => v.nome || state.pessoas.find((p) => p.id === v.id)?.nome)
+          .filter(Boolean);
+        const pags = listaPagamentosDivida(d.id);
+        const fotoPendente = pendingDividaPagFoto.has(d.id);
+        const pagsHtml = pags.length
+          ? pags
+              .map((p) => {
+                const fotoBtns = htmlBtnComprovante(p, {
+                  kind: "divida-pag",
+                  canAdd: podePag,
+                  canRemove: podePag,
+                  compact: true,
+                });
+                const excluirPag = podePag
+                  ? `<button type="button" class="btn btn--ghost btn--sm btn-excluir-divida-pag" data-id="${p.id}" title="Excluir pagamento">×</button>`
+                  : "";
+                const obs = p.observacao
+                  ? `<span class="divida-item__meta"> · ${escapeHtml(p.observacao)}</span>`
+                  : "";
+                return `
+            <div class="divida-pag-item">
+              <div>
+                <strong>${formatMoney(p.valor)}</strong>
+                <span> · ${escapeHtml(formatDate(p.data))}</span>
+                <span class="divida-item__meta"> · ${escapeHtml(p.criadoPorNome || "—")}</span>
+                ${obs}
+              </div>
+              <div class="divida-item__acoes">
+                ${fotoBtns}
+                ${excluirPag}
+              </div>
+            </div>`;
+              })
+              .join("")
+          : `<p class="fieldset__hint" style="margin:0">Nenhum pagamento ainda.</p>`;
+
+        const formPag = podePag
+          ? `
+        <form class="divida-pag-form" data-divida-id="${d.id}" autocomplete="off">
+          <div class="form-row" style="display:flex;flex-wrap:wrap;gap:0.45rem">
+            <label class="field" style="flex:1;min-width:7rem">
+              <span class="field__label">Valor pago (R$)</span>
+              <input type="text" class="input-money divida-pag-valor" inputmode="numeric" placeholder="0,00" required />
+            </label>
+            <label class="field" style="flex:1;min-width:7rem">
+              <span class="field__label">Data</span>
+              <input type="date" class="divida-pag-data" value="${escapeHtml(todayISO())}" required />
+            </label>
+          </div>
+          <label class="field">
+            <span class="field__label">Observação (opcional)</span>
+            <input type="text" class="divida-pag-obs" placeholder="Ex: Parcela julho" />
+          </label>
+          <div class="field">
+            <span class="field__label">Comprovante</span>
+            <div class="divida-item__acoes">
+              <button type="button" class="btn btn--secondary btn--sm btn-divida-pag-foto" data-id="${d.id}">📷 ${
+                fotoPendente ? "Trocar foto" : "Anexar foto"
+              }</button>
+              ${
+                fotoPendente
+                  ? `<button type="button" class="btn btn--ghost btn--sm btn-divida-pag-foto-limpar" data-id="${d.id}">Limpar</button>`
+                  : ""
+              }
+            </div>
+            <p class="fieldset__hint" style="margin:0.25rem 0 0">${
+              fotoPendente ? "Foto pronta — salve o pagamento para enviar." : "Opcional. Tire ou escolha a foto do comprovante."
+            }</p>
+          </div>
+          <button type="submit" class="btn btn--primary btn--sm">Registrar pagamento</button>
+        </form>`
+          : "";
+
+        return `
+      <article class="divida-item">
+        <div class="divida-item__topo">
+          <div>
+            <p class="divida-item__titulo">${escapeHtml(d.descricao)}</p>
+            <p class="divida-item__meta">${escapeHtml(d.tipo || "Outro")} · desde ${escapeHtml(
+          formatDate(d.dataInicio)
+        )}</p>
+            ${
+              viewersNomes.length
+                ? `<p class="divida-acompanhando">Acompanham: ${escapeHtml(viewersNomes.join(", "))}</p>`
+                : ""
+            }
+          </div>
+          <div class="divida-item__acoes">
+            ${
+              podeGerir
+                ? `<button type="button" class="btn btn--edit btn--sm btn-editar-divida" data-id="${d.id}" title="Editar">✎</button>
+                   <button type="button" class="btn btn--icon btn-excluir-divida" data-id="${d.id}" title="Excluir">×</button>`
+                : `<span class="fixa-item__badge">Acompanhando</span>`
+            }
+          </div>
+        </div>
+        <div class="divida-item__saldos">
+          <div class="divida-item__saldo">
+            <span class="divida-item__saldo-label">Total</span>
+            <span class="divida-item__saldo-valor">${formatMoney(sal.total)}</span>
+          </div>
+          <div class="divida-item__saldo">
+            <span class="divida-item__saldo-label">Pago</span>
+            <span class="divida-item__saldo-valor divida-item__saldo-valor--pago">${formatMoney(sal.pago)}</span>
+          </div>
+          <div class="divida-item__saldo">
+            <span class="divida-item__saldo-label">Resta</span>
+            <span class="divida-item__saldo-valor divida-item__saldo-valor--resta">${formatMoney(sal.resta)}</span>
+          </div>
+        </div>
+        <div class="divida-item__pagamentos">
+          ${pagsHtml}
+          ${formPag}
+        </div>
+      </article>`;
+      })
+      .join("");
+
+    bindMoneyInputs(box);
+    wireComprovanteListEvents(box);
+
+    box.querySelectorAll(".btn-editar-divida").forEach((btn) => {
+      btn.addEventListener("click", () => iniciarEdicaoDivida(btn.dataset.id));
+    });
+    box.querySelectorAll(".btn-excluir-divida").forEach((btn) => {
+      btn.addEventListener("click", () => excluirDivida(btn.dataset.id));
+    });
+    box.querySelectorAll(".btn-excluir-divida-pag").forEach((btn) => {
+      btn.addEventListener("click", () => excluirPagamentoDivida(btn.dataset.id));
+    });
+    box.querySelectorAll(".btn-divida-pag-foto").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const dividaId = btn.dataset.id;
+        const file = await escolherOrigemEArquivo();
+        if (!file) return toast("Nenhuma foto selecionada.");
+        try {
+          toast("Processando foto…");
+          const blob = await compressImageFile(file);
+          pendingDividaPagFoto.set(dividaId, blob);
+          renderPessoal();
+          toast("Foto pronta. Salve o pagamento para enviar.");
+        } catch (err) {
+          console.warn(err);
+          toast(err?.message || "Não foi possível processar a imagem.");
+        }
+      });
+    });
+    box.querySelectorAll(".btn-divida-pag-foto-limpar").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        pendingDividaPagFoto.delete(btn.dataset.id);
+        renderPessoal();
+        toast("Foto removida.");
+      });
+    });
+    box.querySelectorAll(".divida-pag-form").forEach((formPag) => {
+      formPag.addEventListener("submit", (e) => {
+        e.preventDefault();
+        registrarPagamentoDivida(formPag.dataset.dividaId, formPag);
+      });
+    });
+  }
+
   function renderPessoal() {
     try {
       renderPessoalInner();
@@ -4627,6 +5135,7 @@
     fillPessoalSelectsCadastro(donoId);
     renderPessoalCadastros(donoId, podeEditar);
     renderPessoalFixas(donoId, podeEditar);
+    renderPessoalDividas(donoId, souDono);
 
     aviso?.classList.toggle("hidden", souDono || !podeVer);
 
@@ -4642,7 +5151,9 @@
 
     if (!podeVer) {
       box.innerHTML = "";
-      empty.textContent = "Você não tem acesso a esta lista.";
+      empty.textContent = listaDividasVisiveis(donoId).length
+        ? "Você acompanha dívidas desta lista, mas não tem acesso aos demais lançamentos pessoais."
+        : "Você não tem acesso a esta lista.";
       empty.classList.remove("hidden");
       if (countEl) countEl.textContent = "0";
       totalBox?.classList.add("hidden");
@@ -5044,6 +5555,9 @@
     if (dataEl) dataEl.value = todayISO();
     const dataRec = $("#receita-data");
     if (dataRec) dataRec.value = todayISO();
+    const dataDiv = $("#divida-data");
+    if (dataDiv) dataDiv.value = todayISO();
+    fillDividaViewers([]);
 
     $("#pessoal-por-categoria")?.addEventListener("click", (e) => {
       const limpar = e.target.closest(".btn-limpar-cat-pessoal");
@@ -5096,6 +5610,7 @@
       limparEdicaoPessoal();
       limparEdicaoReceita();
       limparEdicaoFixa(pessoalDonoId);
+      limparEdicaoDivida();
       renderPessoal();
     });
 
@@ -5128,6 +5643,11 @@
 
     $("#btn-cancelar-fixa")?.addEventListener("click", () => {
       limparEdicaoFixa(pessoalDonoId || usuarioAtual()?.id);
+      toast("Edição cancelada.");
+    });
+
+    $("#btn-cancelar-divida")?.addEventListener("click", () => {
+      limparEdicaoDivida();
       toast("Edição cancelada.");
     });
 
@@ -5447,6 +5967,92 @@
       fillPessoalSelectsCadastro(donoId);
       renderPessoal();
       toast("Despesa fixa cadastrada.");
+    });
+
+    $("#form-pessoal-divida")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const u = usuarioAtual();
+      if (!u) return toast("Faça login.");
+      const donoId = pessoalDonoId || u.id;
+      if (donoId !== u.id && !isAdmin()) {
+        return toast("Só o dono da lista pode cadastrar dívidas.");
+      }
+      const dono = state.pessoas.find((p) => p.id === donoId) || u;
+      const descricao = $("#divida-descricao").value.trim();
+      const tipo = $("#divida-tipo").value || "Outro";
+      const valorTotal = parseMoneyInput($("#divida-valor").value);
+      const dataInicio = $("#divida-data").value;
+      const viewers = viewersSelecionadosDoForm();
+
+      if (!descricao || !(valorTotal > 0) || !dataInicio) {
+        return toast("Preencha descrição, valor total e data de início.");
+      }
+
+      if (editingDividaId) {
+        const existente = (state.pessoalDividas || []).find(
+          (d) => d.id === editingDividaId && d.donoId === donoId
+        );
+        if (!existente) {
+          limparEdicaoDivida();
+          return toast("Dívida não encontrada.");
+        }
+        const viewersAntes = new Set((existente.viewers || []).map((v) => v.id));
+        existente.descricao = descricao;
+        existente.tipo = tipo;
+        existente.valorTotal = valorTotal;
+        existente.dataInicio = dataInicio;
+        existente.viewers = viewers;
+        existente.atualizadoEm = new Date().toISOString();
+
+        const novos = viewers.filter((v) => !viewersAntes.has(v.id)).map((v) => v.id);
+        if (novos.length) {
+          notificar({
+            paraUserIds: novos,
+            titulo: "Dívida compartilhada",
+            texto: `${u.nome} convidou você para acompanhar a dívida "${descricao}" (${formatMoney(valorTotal)}).`,
+            tipo: "pessoal",
+            refId: existente.id,
+          });
+        }
+
+        saveState();
+        updateNotifBadge();
+        limparEdicaoDivida();
+        renderPessoal();
+        toast("Dívida atualizada.");
+        return;
+      }
+
+      const item = {
+        id: uid(),
+        donoId: dono.id,
+        donoNome: dono.nome,
+        descricao,
+        tipo,
+        valorTotal,
+        dataInicio,
+        ativo: true,
+        viewers,
+        criadoEm: new Date().toISOString(),
+      };
+      if (!Array.isArray(state.pessoalDividas)) state.pessoalDividas = [];
+      state.pessoalDividas.unshift(item);
+
+      if (viewers.length) {
+        notificar({
+          paraUserIds: viewers.map((v) => v.id),
+          titulo: "Dívida compartilhada",
+          texto: `${u.nome} convidou você para acompanhar a dívida "${descricao}" (${formatMoney(valorTotal)}).`,
+          tipo: "pessoal",
+          refId: item.id,
+        });
+      }
+
+      saveState();
+      updateNotifBadge();
+      limparEdicaoDivida();
+      renderPessoal();
+      toast("Dívida cadastrada.");
     });
 
     $("#btn-pessoal-compartilhar")?.addEventListener("click", () => {
