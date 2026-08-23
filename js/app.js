@@ -9,7 +9,7 @@
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
   const VISAO_ADMIN_KEY = "despesas_visao_admin";
-  const APP_BUILD = "v70";
+  const APP_BUILD = "v71";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -6983,6 +6983,176 @@
     return out;
   }
 
+  /** Agrupa transferências Ville→Paulo com total e breakdown por origem. */
+  function agruparTransferenciasPorPar(transfers) {
+    const map = new Map();
+    const labelOrigem = (t) => {
+      if (t.origemLabel) return t.origemLabel;
+      if (t.origem === "casa") return "Mercado";
+      if (t.origem === "vaquinha") return "Vaquinha";
+      if (t.origem === "pendencias") return "Entre nós";
+      return "Outro";
+    };
+    (transfers || []).forEach((t) => {
+      const valor = Number(t.valor) || 0;
+      if (!(valor > 0.005) || !t.deId || !t.paraId) return;
+      const key = `${t.deId}|${t.paraId}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          deId: t.deId,
+          deNome: t.deNome,
+          paraId: t.paraId,
+          paraNome: t.paraNome,
+          total: 0,
+          origens: {},
+        });
+      }
+      const g = map.get(key);
+      g.deNome = t.deNome || g.deNome;
+      g.paraNome = t.paraNome || g.paraNome;
+      g.total += valor;
+      const ok = t.origem || "outro";
+      if (!g.origens[ok]) {
+        g.origens[ok] = { key: ok, label: labelOrigem(t), valor: 0, items: [] };
+      }
+      g.origens[ok].valor += valor;
+      g.origens[ok].items.push(t);
+    });
+    const ordem = { casa: 1, vaquinha: 2, pendencias: 3, outro: 9 };
+    return [...map.values()]
+      .map((g) => ({
+        ...g,
+        origensLista: Object.values(g.origens).sort(
+          (a, b) => (ordem[a.key] || 9) - (ordem[b.key] || 9)
+        ),
+      }))
+      .sort((a, b) => {
+        const byDe = String(a.deNome).localeCompare(String(b.deNome), "pt-BR");
+        if (byDe) return byDe;
+        return String(a.paraNome).localeCompare(String(b.paraNome), "pt-BR");
+      });
+  }
+
+  function htmlAcoesQuitacaoTransfer(t, quitada, mesId, escopo, comQuitacao) {
+    if (!comQuitacao) return "";
+    if (quitada) {
+      return `<button type="button" class="btn btn--ghost btn--sm btn-desfazer-quitacao no-print"
+               data-mes="${escapeHtml(mesId)}" data-escopo="${escapeHtml(escopo)}"
+               data-de="${escapeHtml(t.deId)}" data-para="${escapeHtml(t.paraId)}"
+               data-valor="${Number(t.valor)}" data-denome="${escapeHtml(t.deNome)}"
+               data-paranome="${escapeHtml(t.paraNome)}"
+               data-pendencia="${escapeHtml(t.pendenciaId || "")}">Desfazer</button>
+             <span class="badge badge--aberto">Quitado</span>`;
+    }
+    return `<button type="button" class="btn btn--primary btn--sm btn-marcar-quitacao no-print"
+               data-mes="${escapeHtml(mesId)}" data-escopo="${escapeHtml(escopo)}"
+               data-de="${escapeHtml(t.deId)}" data-para="${escapeHtml(t.paraId)}"
+               data-valor="${Number(t.valor)}" data-denome="${escapeHtml(t.deNome)}"
+               data-paranome="${escapeHtml(t.paraNome)}"
+               data-pendencia="${escapeHtml(t.pendenciaId || "")}">Marcar pago</button>`;
+  }
+
+  function htmlListaTransferenciasAgrupadas(transfers, mesId, escopo, comQuitacao) {
+    const grupos = agruparTransferenciasPorPar(transfers);
+    if (!grupos.length) return "";
+
+    const renderItemPendencia = (t) => {
+      const quitada = comQuitacao && quitacaoExiste(mesId, escopo, t);
+      const desc = t.descricao || "Pendência";
+      return `
+        <div class="acerto-pend-item ${quitada ? "acerto-item--quitado" : ""}">
+          <div>
+            <p class="acerto-pend-item__desc">${escapeHtml(desc)}</p>
+            <p class="acerto-item__meta">${formatMoney(t.valor)}</p>
+          </div>
+          <div class="acerto-item__acoes">${htmlAcoesQuitacaoTransfer(t, quitada, mesId, escopo, comQuitacao)}</div>
+        </div>`;
+    };
+
+    const renderOrigem = (origem) => {
+      if (origem.key === "pendencias") {
+        const qtd = origem.items.length;
+        const todosQuit =
+          comQuitacao &&
+          origem.items.every((t) => quitacaoExiste(mesId, escopo, t));
+        return `
+          <details class="acerto-origem-drop ${todosQuit ? "acerto-origem-drop--quitado" : ""}">
+            <summary>
+              <span class="acerto-origem-drop__nome">${escapeHtml(origem.label)}</span>
+              <span class="acerto-origem-drop__valor">${formatMoney(origem.valor)}</span>
+              <span class="acerto-origem-drop__count">${qtd}</span>
+            </summary>
+            <div class="acerto-origem-drop__lista">
+              ${origem.items.map(renderItemPendencia).join("")}
+            </div>
+          </details>`;
+      }
+
+      // Mercado / Vaquinha: linha simples (em geral 1 transferência)
+      return origem.items
+        .map((t) => {
+          const quitada = comQuitacao && quitacaoExiste(mesId, escopo, t);
+          return `
+          <div class="acerto-origem-linha ${quitada ? "acerto-item--quitado" : ""}">
+            <span class="acerto-origem-drop__nome">${escapeHtml(origem.label)}</span>
+            <span class="acerto-origem-drop__valor">${formatMoney(t.valor)}</span>
+            <div class="acerto-item__acoes">${htmlAcoesQuitacaoTransfer(
+              t,
+              quitada,
+              mesId,
+              escopo,
+              comQuitacao
+            )}</div>
+          </div>`;
+        })
+        .join("");
+    };
+
+    const pendentes = [];
+    const quitadas = [];
+    grupos.forEach((g) => {
+      const itens = g.origensLista.flatMap((o) => o.items);
+      const todosQuit =
+        comQuitacao && itens.length && itens.every((t) => quitacaoExiste(mesId, escopo, t));
+      if (todosQuit) quitadas.push(g);
+      else pendentes.push(g);
+    });
+
+    const renderGrupo = (g) => `
+      <details class="acerto-par-drop">
+        <summary>
+          <span class="acerto-par-drop__fluxo">
+            <strong>${escapeHtml(g.deNome)}</strong>
+            <span class="acerto-item__seta" aria-hidden="true">→</span>
+            <strong>${escapeHtml(g.paraNome)}</strong>
+          </span>
+          <span class="acerto-par-drop__total">Total ${formatMoney(g.total)}</span>
+        </summary>
+        <div class="acerto-par-drop__body">
+          ${g.origensLista.map(renderOrigem).join("")}
+        </div>
+      </details>`;
+
+    let html = "";
+    if (pendentes.length) {
+      html += `
+      <div class="acerto-lista">
+        <p class="acerto-lista__titulo">Quem passa pra quem</p>
+        ${pendentes.map(renderGrupo).join("")}
+      </div>`;
+    } else if (quitadas.length) {
+      html += `<p class="fieldset__hint" style="margin:0.75rem 0 0">Todas as transferências deste bloco já foram quitadas.</p>`;
+    }
+    if (quitadas.length) {
+      html += `
+      <div class="acerto-lista acerto-lista--quitadas">
+        <p class="acerto-lista__titulo">Já quitadas</p>
+        ${quitadas.map(renderGrupo).join("")}
+      </div>`;
+    }
+    return html;
+  }
+
   function htmlBlocoAcerto({
     titulo,
     meta,
@@ -6993,6 +7163,7 @@
     mesId = null,
     escopo = null,
     conferenciaLinhas = null,
+    agruparPorPar = false,
   }) {
     const saldosAtivos = filtrarSaldosAtivos(saldos);
     const transfersAtivas = (transfers || []).filter((t) => Number(t.valor) > 0.005);
@@ -7041,30 +7212,26 @@
       </div>`
       : "";
 
-    const renderTransfer = (t, quitada) => {
-      const acao = !comQuitacao
-        ? ""
-        : quitada
-          ? `<button type="button" class="btn btn--ghost btn--sm btn-desfazer-quitacao no-print"
-               data-mes="${escapeHtml(mesId)}" data-escopo="${escapeHtml(escopo)}"
-               data-de="${escapeHtml(t.deId)}" data-para="${escapeHtml(t.paraId)}"
-               data-valor="${Number(t.valor)}" data-denome="${escapeHtml(t.deNome)}"
-               data-paranome="${escapeHtml(t.paraNome)}"
-               data-pendencia="${escapeHtml(t.pendenciaId || "")}">Desfazer</button>
-             <span class="badge badge--aberto">Quitado</span>`
-          : `<button type="button" class="btn btn--primary btn--sm btn-marcar-quitacao no-print"
-               data-mes="${escapeHtml(mesId)}" data-escopo="${escapeHtml(escopo)}"
-               data-de="${escapeHtml(t.deId)}" data-para="${escapeHtml(t.paraId)}"
-               data-valor="${Number(t.valor)}" data-denome="${escapeHtml(t.deNome)}"
-               data-paranome="${escapeHtml(t.paraNome)}"
-               data-pendencia="${escapeHtml(t.pendenciaId || "")}">Marcar pago</button>`;
-      const metaParts = [];
-      if (t.origemLabel) metaParts.push(t.origemLabel);
-      if (t.descricao) metaParts.push(t.descricao);
-      const metaHtml = metaParts.length
-        ? `<p class="acerto-item__meta">${escapeHtml(metaParts.join(" · "))}</p>`
-        : "";
-      return `
+    let transfersHtml = "";
+    if (agruparPorPar) {
+      transfersHtml = htmlListaTransferenciasAgrupadas(
+        transfersAtivas,
+        mesId,
+        escopo,
+        comQuitacao
+      );
+      if (!transfersHtml && !transfersAtivas.length) {
+        transfersHtml = `<p class="fieldset__hint" style="margin:0.75rem 0 0">Todos quitados — nenhuma transferência.</p>`;
+      }
+    } else {
+      const renderTransfer = (t, quitada) => {
+        const metaParts = [];
+        if (t.origemLabel) metaParts.push(t.origemLabel);
+        if (t.descricao) metaParts.push(t.descricao);
+        const metaHtml = metaParts.length
+          ? `<p class="acerto-item__meta">${escapeHtml(metaParts.join(" · "))}</p>`
+          : "";
+        return `
           <div class="acerto-item ${quitada ? "acerto-item--quitado" : ""}">
             <p class="acerto-item__fluxo">
               <strong>${escapeHtml(t.deNome)}</strong>
@@ -7073,29 +7240,35 @@
             </p>
             ${metaHtml}
             <p class="acerto-item__valor">${formatMoney(t.valor)}</p>
-            <div class="acerto-item__acoes">${acao}</div>
+            <div class="acerto-item__acoes">${htmlAcoesQuitacaoTransfer(
+              t,
+              quitada,
+              mesId,
+              escopo,
+              comQuitacao
+            )}</div>
           </div>`;
-    };
+      };
 
-    let transfersHtml = "";
-    if (pendentes.length) {
-      transfersHtml += `
+      if (pendentes.length) {
+        transfersHtml += `
       <div class="acerto-lista">
         <p class="acerto-lista__titulo">Quem passa pra quem</p>
         ${pendentes.map((t) => renderTransfer(t, false)).join("")}
       </div>`;
-    } else if (transfersAtivas.length && quitadas.length) {
-      transfersHtml += `<p class="fieldset__hint" style="margin:0.75rem 0 0">Todas as transferências deste bloco já foram quitadas.</p>`;
-    } else if (!transfersAtivas.length) {
-      transfersHtml += `<p class="fieldset__hint" style="margin:0.75rem 0 0">Todos quitados — nenhuma transferência.</p>`;
-    }
+      } else if (transfersAtivas.length && quitadas.length) {
+        transfersHtml += `<p class="fieldset__hint" style="margin:0.75rem 0 0">Todas as transferências deste bloco já foram quitadas.</p>`;
+      } else if (!transfersAtivas.length) {
+        transfersHtml += `<p class="fieldset__hint" style="margin:0.75rem 0 0">Todos quitados — nenhuma transferência.</p>`;
+      }
 
-    if (quitadas.length) {
-      transfersHtml += `
+      if (quitadas.length) {
+        transfersHtml += `
       <div class="acerto-lista acerto-lista--quitadas">
         <p class="acerto-lista__titulo">Já quitadas</p>
         ${quitadas.map((t) => renderTransfer(t, true)).join("")}
       </div>`;
+      }
     }
 
     const conferenciaHtml = Array.isArray(conferenciaLinhas)
@@ -8242,6 +8415,26 @@
     });
   }
 
+  function textoLinhasTransferenciasAgrupadas(transfers, mesId, escopo) {
+    const grupos = agruparTransferenciasPorPar(transfers);
+    if (!grupos.length) return ["(nenhuma transferência)"];
+    const linhas = [];
+    grupos.forEach((g) => {
+      linhas.push(`• ${g.deNome} → ${g.paraNome} total: ${formatMoney(g.total)}`);
+      g.origensLista.forEach((o) => {
+        linhas.push(`   - ${o.label}: ${formatMoney(o.valor)}`);
+        if (o.key === "pendencias") {
+          o.items.forEach((t) => {
+            const quit = mesId && escopo && quitacaoExiste(mesId, escopo, t) ? " ✅" : "";
+            const desc = t.descricao || "Pendência";
+            linhas.push(`      · ${desc}: ${formatMoney(t.valor)}${quit}`);
+          });
+        }
+      });
+    });
+    return linhas;
+  }
+
   function textoEncontroParaCopiar() {
     const mesId = $("#encontro-mes")?.value || mesSelecionado;
     if (!mesId) return "";
@@ -8294,8 +8487,8 @@
     });
     linhas.push(
       "",
-      "*Quem passa pra quem* (Entre nós: cada pendência, sem compensar com terceiros)",
-      ...textoLinhasTransferencias(transfers, mesId, "encontro")
+      "*Quem passa pra quem*",
+      ...textoLinhasTransferenciasAgrupadas(transfers, mesId, "encontro")
     );
     return linhas.join("\n").trim();
   }
@@ -8418,13 +8611,14 @@
 
     box.innerHTML = htmlBlocoAcerto({
       titulo: `Encontro — ${labelMes(mesId)}`,
-      meta: `${origens.join(" · ")} · Entre nós sem atalho entre terceiros · ${visaoTxt}`,
+      meta: `${origens.join(" · ")} · toque no par para ver Mercado / Vaquinha / Entre nós · ${visaoTxt}`,
       saldos,
       transfers,
       vazio: !saldos.length && !transfers.length,
       mesId,
       escopo: "encontro",
       conferenciaLinhas: linhasConferenciaEncontro(mesId, optsEnc),
+      agruparPorPar: true,
     });
     bindQuitacaoButtons(box);
   }
