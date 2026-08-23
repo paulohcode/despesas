@@ -8,7 +8,8 @@
   const CASA_KEY = "despesas_codigo_casa";
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
-  const APP_BUILD = "v66";
+  const VISAO_ADMIN_KEY = "despesas_visao_admin";
+  const APP_BUILD = "v70";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -83,6 +84,13 @@
   let editingFixaId = null;
   let editingDividaId = null;
   const pendingDividaPagFoto = new Map(); // dividaId -> Blob
+  let visaoAdminAtiva = (() => {
+    try {
+      return localStorage.getItem(VISAO_ADMIN_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  })();
   let deferredInstallPrompt = null;
   let toastTimer = null;
   let syncRef = null;
@@ -1187,7 +1195,7 @@
     );
   }
 
-  /** Admin vê tudo; demais só pendências em que entram como credor/devedor. */
+  /** Admin vê tudo (se visão admin estiver ativa); demais só pendências em que entram. */
   function pendenciasVisiveis(lista) {
     const items = Array.isArray(lista) ? lista : [];
     if (isAdmin()) return items;
@@ -1203,10 +1211,40 @@
     return String(p.credorNome || "").trim().toLowerCase() === u.nome.trim().toLowerCase();
   }
 
-  function isAdmin() {
+  /** Conta do Paulo — poderes de gestão (mês, usuários), independente da visão. */
+  function ehContaAdmin() {
     const u = usuarioAtual();
     if (!u?.nome) return false;
     return u.nome.trim().toLowerCase() === ADMIN_NOME;
+  }
+
+  /** Visão admin: ver todos os acertos/pendências. Desligada = enxerga como usuário comum. */
+  function isAdmin() {
+    return ehContaAdmin() && visaoAdminAtiva;
+  }
+
+  function setVisaoAdmin(ativa) {
+    visaoAdminAtiva = !!ativa;
+    try {
+      localStorage.setItem(VISAO_ADMIN_KEY, visaoAdminAtiva ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** No Encontro/relatório: usuário comum só vê o próprio saldo e transferências em que entra. */
+  function filtrarAcertoParaUsuario(saldos, transfers) {
+    if (isAdmin()) {
+      return { saldos: saldos || [], transfers: transfers || [] };
+    }
+    const u = usuarioAtual();
+    if (!u) return { saldos: [], transfers: [] };
+    return {
+      saldos: (saldos || []).filter((s) => s && s.id === u.id),
+      transfers: (transfers || []).filter(
+        (t) => t && (t.deId === u.id || t.paraId === u.id)
+      ),
+    };
   }
 
   function pessoaPrecisaDefinirSenha(pessoa) {
@@ -1332,7 +1370,7 @@
     const pessoa = state.pessoas.find((p) => p.id === pessoaId);
     if (!pessoa) return toast("Usuário não encontrado.");
     const souEu = pessoa.id === usuarioAtualId;
-    if (!souEu && !isAdmin()) return toast("Sem permissão.");
+    if (!souEu && !ehContaAdmin()) return toast("Sem permissão.");
     definirSenhaCtxId = pessoa.id;
     const titulo = $("#modal-definir-senha-titulo");
     const texto = $("#modal-definir-senha-texto");
@@ -2781,7 +2819,7 @@
         })
         .catch(() => {});
     }
-    toast(`Bem-vindo(a), ${pessoa.nome}${isAdmin() ? " (admin)" : ""}!`);
+    toast(`Bem-vindo(a), ${pessoa.nome}${ehContaAdmin() ? " (admin)" : ""}!`);
     talvezPedirNotificacoes();
   }
 
@@ -2986,7 +3024,7 @@
     const aberto = mesAberto();
     box.classList.remove("mes-status--aberto", "mes-status--fechado", "mes-status--nenhum");
 
-    const admin = isAdmin();
+    const admin = ehContaAdmin();
     let acoesAdmin = "";
     if (admin) {
       if (aberto) {
@@ -3063,7 +3101,9 @@
     const hintMes = $("#hint-mes-admin");
     if (hintMes) {
       hintMes.textContent = admin
-        ? "Você é admin: pode abrir e encerrar o mês aqui ou no topo da tela."
+        ? visaoAdminAtiva
+          ? "Visão admin: você vê todos os acertos. Em Config pode mudar para visão de usuário."
+          : "Visão de usuário: você só vê o que te envolve. Em Config volte para visão admin."
         : "Somente Paulo (admin) pode abrir e encerrar o mês.";
     }
 
@@ -3131,11 +3171,13 @@
             `<button type="button" class="btn btn--ghost btn--sm btn-excluir-mercado" data-id="${item.id}">Excluir</button>`
           );
         }
+        const obs = String(item.obs || "").trim();
         return `
       <article class="mercado-item">
         <div>
           <p class="mercado-item__meta">${formatDate(item.data)} · ${escapeHtml(PAGAMENTOS[item.pagamento] || item.pagamento || "—")}</p>
           <p class="mercado-item__detalhe">${escapeHtml(labelComprador(item.comprador))}</p>
+          ${obs ? `<p class="mercado-item__por" style="margin-top:0.25rem">${escapeHtml(obs)}</p>` : ""}
         </div>
         <p class="mercado-item__valor">${formatMoney(item.valor)}</p>
         <div class="mercado-item__rodape">
@@ -3212,6 +3254,7 @@
     $("#mercado-comprador").value = item.comprador || "";
     $("#mercado-pagamento").value = item.pagamento || "pix";
     setMoneyInput("#mercado-valor", item.valor);
+    if ($("#mercado-obs")) $("#mercado-obs").value = item.obs || "";
     const src = srcComprovante(item);
     if (src) {
       comprovanteExistente.mercado = {
@@ -3438,6 +3481,7 @@
       const comprador = $("#mercado-comprador").value;
       const pagamento = $("#mercado-pagamento").value;
       const valor = parseMoneyInput($("#mercado-valor").value);
+      const obs = ($("#mercado-obs")?.value || "").trim().replace(/\s+/g, " ").slice(0, 500);
       if (!data || !comprador || !pagamento || !(valor > 0)) return toast("Preencha todos os campos.");
       if (data.slice(0, 7) !== state.mesAtual) return toast(`A data deve pertencer a ${labelMes(state.mesAtual)}.`);
 
@@ -3462,6 +3506,7 @@
         existente.comprador = comprador;
         existente.pagamento = pagamento;
         existente.valor = valor;
+        existente.obs = obs;
         existente.criterio = "proporcional";
         existente.divisao = divisao;
         try {
@@ -3494,6 +3539,7 @@
         comprador,
         pagamento,
         valor,
+        obs,
         criterio: "proporcional",
         divisao,
         ...autor,
@@ -3660,7 +3706,7 @@
 
     $("#form-pessoa").addEventListener("submit", (e) => {
       e.preventDefault();
-      if (!isAdmin()) return toast("Somente o admin pode cadastrar usuários.");
+      if (!ehContaAdmin()) return toast("Somente o admin pode cadastrar usuários.");
       const nome = $("#pessoa-nome").value.trim().replace(/\s+/g, " ");
       if (!nome) return toast("Informe o nome.");
       if (state.pessoas.some((p) => p.nome.toLowerCase() === nome.toLowerCase())) {
@@ -3861,7 +3907,7 @@
     });
 
     $("#btn-abrir-mes").addEventListener("click", () => {
-      if (!isAdmin()) return toast("Somente Paulo pode abrir o mês.");
+      if (!ehContaAdmin()) return toast("Somente Paulo pode abrir o mês.");
       $("#erro-abrir-mes").classList.add("hidden");
       $("#input-abrir-mes").value = currentMonthId();
       $("#modal-abrir-mes").showModal();
@@ -3871,7 +3917,7 @@
 
     $("#form-abrir-mes").addEventListener("submit", (e) => {
       e.preventDefault();
-      if (!isAdmin()) return toast("Somente Paulo pode abrir o mês.");
+      if (!ehContaAdmin()) return toast("Somente Paulo pode abrir o mês.");
       const id = $("#input-abrir-mes").value;
       const erro = $("#erro-abrir-mes");
       if (!id) {
@@ -3923,7 +3969,7 @@
     });
 
     $("#btn-fechar-mes").addEventListener("click", () => {
-      if (!isAdmin()) return toast("Somente Paulo pode encerrar o mês.");
+      if (!ehContaAdmin()) return toast("Somente Paulo pode encerrar o mês.");
       const aberto = mesAberto();
       if (!aberto) return toast("Não há mês aberto.");
       if (!confirm(`Encerrar ${aberto.label}? Não será possível lançar mercado/despesas/vaquinha até abrir outro.`)) return;
@@ -6759,6 +6805,70 @@
     });
   }
 
+  function htmlConferenciaDrop(titulo, linhasTexto) {
+    const items = (linhasTexto || [])
+      .map((s) => String(s || "").trim())
+      .filter(Boolean);
+    if (!items.length) return "";
+    return `
+      <details class="conferencia-drop">
+        <summary>
+          ${escapeHtml(titulo)}
+          <span class="conferencia-drop__count">${items.length}</span>
+        </summary>
+        <ul class="conferencia-drop__lista">
+          ${items.map((t) => `<li>${escapeHtml(t)}</li>`).join("")}
+        </ul>
+      </details>`;
+  }
+
+  function linhasConferenciaCasa(mesId) {
+    return state.lancamentos
+      .filter((l) => l.mesId === mesId && (l.tipo === "mercado" || l.tipo === "despesa"))
+      .sort((a, b) => String(b.data || "").localeCompare(String(a.data || "")))
+      .map((item) => {
+        if (item.tipo === "mercado") {
+          const obs = String(item.obs || "").trim();
+          return `${formatDate(item.data)} · Mercado · ${labelComprador(item.comprador)} · ${formatMoney(item.valor)}${
+            obs ? ` — ${obs}` : ""
+          }`;
+        }
+        return `${formatDate(item.data)} · ${item.descricao || "Despesa"} · ${labelComprador(item.comprador)} · ${formatMoney(
+          item.valor
+        )}`;
+      });
+  }
+
+  function linhasConferenciaVaquinha(mesId) {
+    return state.lancamentos
+      .filter((l) => l.tipo === "vaquinha" && l.mesId === mesId)
+      .sort((a, b) => String(b.data || "").localeCompare(String(a.data || "")))
+      .map(
+        (v) =>
+          `${formatDate(v.data)} · Vaquinha · ${v.descricao || "—"} · ${formatMoney(v.valor)}`
+      );
+  }
+
+  function linhasConferenciaPendencias(mesId) {
+    return pendenciasVisiveis(state.pendencias)
+      .filter((p) => p && p.status === "pendente" && (p.data || "").slice(0, 7) === mesId)
+      .sort((a, b) => String(b.data || "").localeCompare(String(a.data || "")))
+      .map(
+        (p) =>
+          `${formatDate(p.data)} · Entre nós · ${p.descricao || "—"} · ${p.devedorNome || "—"} → ${
+            p.credorNome || "—"
+          } · ${formatMoney(p.valor)}`
+      );
+  }
+
+  function linhasConferenciaEncontro(mesId, opts = {}) {
+    const linhas = [];
+    if (opts.casa) linhas.push(...linhasConferenciaCasa(mesId));
+    if (opts.vaquinha) linhas.push(...linhasConferenciaVaquinha(mesId));
+    if (opts.pendencias) linhas.push(...linhasConferenciaPendencias(mesId));
+    return linhas;
+  }
+
   function htmlDetalheOrigensSaldo(s) {
     const det = Array.isArray(s?.detalheOrigens) ? s.detalheOrigens : [];
     if (det.length < 1) return "";
@@ -6768,15 +6878,15 @@
       const mesmoLado =
         Math.abs(net) < 0.005 || (net > 0 && d.saldo > 0) || (net < 0 && d.saldo < 0);
       if (mesmoLado) {
-        return `${formatMoney(v)} de ${escapeHtml(d.label)}`;
+        return `${formatMoney(v)} de ${d.label}`;
       }
       const lado = d.saldo > 0 ? "a receber" : "a pagar";
-      return `${formatMoney(v)} ${lado} (${escapeHtml(d.label)})`;
+      return `${formatMoney(v)} ${lado} (${d.label})`;
     });
-    return `<p class="card-grupo__origens">${partes.join(" · ")}</p>`;
+    return htmlConferenciaDrop("Origens do saldo", partes);
   }
 
-  /** Minimiza transferências: quem está negativo paga quem está positivo. */
+  /** Minimiza transferências (Mercado/Vaquinha): quem está negativo paga quem está positivo. */
   function calcularTransferencias(saldos) {
     const EPS = 0.005;
     const devedores = saldos
@@ -6812,6 +6922,67 @@
     return transfers;
   }
 
+  /**
+   * Entre nós: uma transferência por pendência aberta (devedor → credor).
+   * Não compensa com terceiros (ex.: Ville não paga a Jennifer no seu lugar).
+   */
+  function calcularTransferenciasPendenciasMes(mesId) {
+    const transfers = [];
+    pendenciasVisiveis(state.pendencias)
+      .filter((p) => p && p.status === "pendente" && (p.data || "").slice(0, 7) === mesId)
+      .forEach((p) => {
+        const valor = Number(p.valor) || 0;
+        if (!(valor > 0.005)) return;
+        const credor = acharPessoaPorIdOuNome(p.credorId, p.credorNome);
+        const devedor = acharPessoaPorIdOuNome(p.devedorId, p.devedorNome);
+        const deId = devedor?.id || p.devedorId;
+        const paraId = credor?.id || p.credorId;
+        if (!deId || !paraId || deId === paraId) return;
+        transfers.push({
+          deId,
+          deNome: devedor?.nome || p.devedorNome || "—",
+          paraId,
+          paraNome: credor?.nome || p.credorNome || "—",
+          valor,
+          origem: "pendencias",
+          origemLabel: "Entre nós",
+          pendenciaId: p.id,
+          descricao: p.descricao || "",
+        });
+      });
+    return transfers.sort((a, b) => {
+      const byDe = String(a.deNome).localeCompare(String(b.deNome), "pt-BR");
+      if (byDe) return byDe;
+      const byPara = String(a.paraNome).localeCompare(String(b.paraNome), "pt-BR");
+      if (byPara) return byPara;
+      return String(b.descricao || "").localeCompare(String(a.descricao || ""), "pt-BR");
+    });
+  }
+
+  /** Transferências do Encontro por origem — Entre nós sem atalho entre terceiros. */
+  function calcularTransferenciasEncontro(mesId, opts = {}) {
+    const out = [];
+    if (opts.casa) {
+      const casa = state.lancamentos.filter(
+        (l) => l.mesId === mesId && (l.tipo === "mercado" || l.tipo === "despesa")
+      );
+      calcularTransferencias(converterSaldosGruposParaPessoas(calcularSaldosGrupos(casa))).forEach(
+        (t) => {
+          out.push({ ...t, origem: "casa", origemLabel: "Mercado" });
+        }
+      );
+    }
+    if (opts.vaquinha) {
+      calcularTransferencias(calcularSaldosPessoasVaquinha(mesId)).forEach((t) => {
+        out.push({ ...t, origem: "vaquinha", origemLabel: "Vaquinha" });
+      });
+    }
+    if (opts.pendencias) {
+      out.push(...calcularTransferenciasPendenciasMes(mesId));
+    }
+    return out;
+  }
+
   function htmlBlocoAcerto({
     titulo,
     meta,
@@ -6821,6 +6992,7 @@
     mostrarCabecalho = true,
     mesId = null,
     escopo = null,
+    conferenciaLinhas = null,
   }) {
     const saldosAtivos = filtrarSaldosAtivos(saldos);
     const transfersAtivas = (transfers || []).filter((t) => Number(t.valor) > 0.005);
@@ -6833,11 +7005,14 @@
     });
 
     if (vazio || (!saldosAtivos.length && !transfersAtivas.length)) {
+      const confVazia = Array.isArray(conferenciaLinhas)
+        ? htmlConferenciaDrop("Conferência dos lançamentos", conferenciaLinhas)
+        : "";
       return `
         <div class="card-resumo">
           <p class="card-resumo__label">${escapeHtml(titulo)}</p>
           <p class="card-resumo__meta" style="opacity:1;margin-top:0.35rem">Nada a acertar neste mês.</p>
-        </div>`;
+        </div>${confVazia}`;
     }
 
     const cabecalho = mostrarCabecalho
@@ -6874,13 +7049,21 @@
                data-mes="${escapeHtml(mesId)}" data-escopo="${escapeHtml(escopo)}"
                data-de="${escapeHtml(t.deId)}" data-para="${escapeHtml(t.paraId)}"
                data-valor="${Number(t.valor)}" data-denome="${escapeHtml(t.deNome)}"
-               data-paranome="${escapeHtml(t.paraNome)}">Desfazer</button>
+               data-paranome="${escapeHtml(t.paraNome)}"
+               data-pendencia="${escapeHtml(t.pendenciaId || "")}">Desfazer</button>
              <span class="badge badge--aberto">Quitado</span>`
           : `<button type="button" class="btn btn--primary btn--sm btn-marcar-quitacao no-print"
                data-mes="${escapeHtml(mesId)}" data-escopo="${escapeHtml(escopo)}"
                data-de="${escapeHtml(t.deId)}" data-para="${escapeHtml(t.paraId)}"
                data-valor="${Number(t.valor)}" data-denome="${escapeHtml(t.deNome)}"
-               data-paranome="${escapeHtml(t.paraNome)}">Marcar pago</button>`;
+               data-paranome="${escapeHtml(t.paraNome)}"
+               data-pendencia="${escapeHtml(t.pendenciaId || "")}">Marcar pago</button>`;
+      const metaParts = [];
+      if (t.origemLabel) metaParts.push(t.origemLabel);
+      if (t.descricao) metaParts.push(t.descricao);
+      const metaHtml = metaParts.length
+        ? `<p class="acerto-item__meta">${escapeHtml(metaParts.join(" · "))}</p>`
+        : "";
       return `
           <div class="acerto-item ${quitada ? "acerto-item--quitado" : ""}">
             <p class="acerto-item__fluxo">
@@ -6888,6 +7071,7 @@
               <span class="acerto-item__seta" aria-hidden="true">→</span>
               <strong>${escapeHtml(t.paraNome)}</strong>
             </p>
+            ${metaHtml}
             <p class="acerto-item__valor">${formatMoney(t.valor)}</p>
             <div class="acerto-item__acoes">${acao}</div>
           </div>`;
@@ -6914,7 +7098,11 @@
       </div>`;
     }
 
-    return `${cabecalho}${saldosHtml}${transfersHtml}`;
+    const conferenciaHtml = Array.isArray(conferenciaLinhas)
+      ? htmlConferenciaDrop("Conferência dos lançamentos", conferenciaLinhas)
+      : "";
+
+    return `${cabecalho}${saldosHtml}${transfersHtml}${conferenciaHtml}`;
   }
 
   function marcarTransferenciaPaga(mesId, escopo, t) {
@@ -6938,15 +7126,23 @@
     });
 
     if (escopo === "pessoas" || escopo === "encontro") {
-      const match = (state.pendencias || []).find(
-        (p) =>
-          p &&
-          p.status === "pendente" &&
-          (p.data || "").slice(0, 7) === mesId &&
-          p.devedorId === t.deId &&
-          p.credorId === t.paraId &&
-          Math.abs(Number(p.valor) - Number(t.valor)) < 0.02
-      );
+      let match = null;
+      if (t.pendenciaId) {
+        match = (state.pendencias || []).find(
+          (p) => p && p.id === t.pendenciaId && p.status === "pendente"
+        );
+      }
+      if (!match) {
+        match = (state.pendencias || []).find(
+          (p) =>
+            p &&
+            p.status === "pendente" &&
+            (p.data || "").slice(0, 7) === mesId &&
+            p.devedorId === t.deId &&
+            p.credorId === t.paraId &&
+            Math.abs(Number(p.valor) - Number(t.valor)) < 0.02
+        );
+      }
       if (match) {
         match.status = "pago";
         match.pagoEm = new Date().toISOString();
@@ -6988,6 +7184,7 @@
           paraId: btn.dataset.para,
           paraNome: btn.dataset.paranome,
           valor: Number(btn.dataset.valor),
+          pendenciaId: btn.dataset.pendencia || "",
         });
       });
     });
@@ -6999,6 +7196,7 @@
           paraId: btn.dataset.para,
           paraNome: btn.dataset.paranome,
           valor: Number(btn.dataset.valor),
+          pendenciaId: btn.dataset.pendencia || "",
         });
       });
     });
@@ -7084,9 +7282,9 @@
         ]
           .filter(Boolean)
           .join(" · ");
-        const podeRemover = isAdmin() && !adminUser && !voce;
-        const podeReset = isAdmin() && !semSenha;
-        const podeDefinir = semSenha && (voce || isAdmin());
+        const podeRemover = ehContaAdmin() && !adminUser && !voce;
+        const podeReset = ehContaAdmin() && !semSenha;
+        const podeDefinir = semSenha && (voce || ehContaAdmin());
         return `
       <li class="lista-pessoas__item">
         <span>${escapeHtml(p.nome)}${meta ? ` <span class="detalhe">(${meta})</span>` : ""}</span>
@@ -7117,7 +7315,7 @@
 
     lista.querySelectorAll(".btn-reset-senha").forEach((btn) => {
       btn.addEventListener("click", () => {
-        if (!isAdmin()) return toast("Somente o admin pode resetar senhas.");
+        if (!ehContaAdmin()) return toast("Somente o admin pode resetar senhas.");
         const pessoa = state.pessoas.find((p) => p.id === btn.dataset.id);
         if (!pessoa) return;
         if (
@@ -7140,7 +7338,7 @@
 
     lista.querySelectorAll(".btn-excluir-pessoa").forEach((btn) => {
       btn.addEventListener("click", () => {
-        if (!isAdmin()) return toast("Somente o admin pode remover usuários.");
+        if (!ehContaAdmin()) return toast("Somente o admin pode remover usuários.");
         const id = btn.dataset.id;
         if (id === usuarioAtualId) return toast("Não é possível remover o usuário logado.");
         const pessoa = state.pessoas.find((p) => p.id === id);
@@ -7602,6 +7800,34 @@
     fillSelectCompradores();
     updateMesStatus();
     atualizarPushStatus();
+    atualizarVisaoAdminUI();
+  }
+
+  function atualizarVisaoAdminUI() {
+    const box = $("#config-visao-admin");
+    if (!box) return;
+    const conta = ehContaAdmin();
+    box.classList.toggle("hidden", !conta);
+    if (!conta) return;
+    const adminRadio = $("#visao-modo-admin");
+    const userRadio = $("#visao-modo-usuario");
+    if (adminRadio) adminRadio.checked = visaoAdminAtiva;
+    if (userRadio) userRadio.checked = !visaoAdminAtiva;
+    const badge = $("#config-visao-badge");
+    if (badge) {
+      badge.textContent = visaoAdminAtiva ? "Admin (ver tudo)" : "Usuário (só o seu)";
+      badge.className = visaoAdminAtiva ? "badge badge--aberto" : "badge badge--fechado";
+    }
+  }
+
+  function aplicarMudancaVisaoAdmin() {
+    atualizarVisaoAdminUI();
+    updateMesStatus();
+    renderEncontro();
+    renderPendencias();
+    renderRelatorio();
+    renderPessoal();
+    toast(visaoAdminAtiva ? "Visão admin: você vê tudo." : "Visão de usuário: só o que te envolve.");
   }
 
   function updateSomaPesos() {
@@ -8010,7 +8236,9 @@
     if (!ativas.length) return ["(nenhuma transferência)"];
     return ativas.map((t) => {
       const quit = mesId && escopo && quitacaoExiste(mesId, escopo, t) ? " ✅" : "";
-      return `• ${t.deNome} → ${t.paraNome}: ${formatMoney(t.valor)}${quit}`;
+      const extra = [t.origemLabel, t.descricao].filter(Boolean).join(" · ");
+      const sufixo = extra ? ` (${extra})` : "";
+      return `• ${t.deNome} → ${t.paraNome}: ${formatMoney(t.valor)}${sufixo}${quit}`;
     });
   }
 
@@ -8028,18 +8256,24 @@
       usePend ? "Entre nós" : null,
     ].filter(Boolean);
 
-    const saldos = calcularSaldosEncontro(mesId, {
+    const saldosAll = calcularSaldosEncontro(mesId, {
       casa: useCasa,
       vaquinha: useVaq,
       pendencias: usePend,
     });
-    const transfers = calcularTransferencias(saldos);
+    const transfersAll = calcularTransferenciasEncontro(mesId, {
+      casa: useCasa,
+      vaquinha: useVaq,
+      pendencias: usePend,
+    });
+    const { saldos, transfers } = filtrarAcertoParaUsuario(saldosAll, transfersAll);
 
     const linhas = [
       `*Encontro — ${labelMes(mesId)}*`,
       origens.join(" · "),
+      isAdmin() ? "Visão admin (todos)" : "Só o que te envolve",
       "",
-      "*Saldo líquido (tudo somado)*",
+      "*Saldo por pessoa*",
     ];
     saldos.forEach((s) => {
       const t = textoSaldo(s.saldo);
@@ -8058,7 +8292,11 @@
         linhas.push(`  ${partes.join(" · ")}`);
       }
     });
-    linhas.push("", "*Quem passa pra quem*", ...textoLinhasTransferencias(transfers, mesId, "encontro"));
+    linhas.push(
+      "",
+      "*Quem passa pra quem* (Entre nós: cada pendência, sem compensar com terceiros)",
+      ...textoLinhasTransferencias(transfers, mesId, "encontro")
+    );
     return linhas.join("\n").trim();
   }
 
@@ -8071,12 +8309,14 @@
       const vaquinhas = state.lancamentos.filter(
         (l) => l.tipo === "vaquinha" && l.mesId === mesId
       );
-      const saldos = calcularSaldosPessoasVaquinha(mesId);
-      const transfers = calcularTransferencias(saldos);
+      const saldosAll = calcularSaldosPessoasVaquinha(mesId);
+      const transfersAll = calcularTransferencias(saldosAll);
+      const { transfers } = filtrarAcertoParaUsuario(saldosAll, transfersAll);
       const total = vaquinhas.reduce((acc, v) => acc + (Number(v.valor) || 0), 0);
       const linhas = [
         `*Vaquinhas — ${titulo}*`,
         `Total: ${formatMoney(total)} · ${vaquinhas.length} vaquinha(s)`,
+        isAdmin() ? "Visão admin" : "Só o que te envolve",
         "",
         "*Acerto*",
         ...textoLinhasTransferencias(transfers),
@@ -8093,14 +8333,16 @@
         (p) => (p.data || "").slice(0, 7) === mesId
       );
       const abertas = items.filter((p) => p.status === "pendente");
-      const saldos = calcularSaldosPendenciasMes(mesId);
-      const transfers = calcularTransferencias(saldos);
+      const saldosAll = calcularSaldosPendenciasMes(mesId);
+      const transfersAll = calcularTransferenciasPendenciasMes(mesId);
+      const { saldos, transfers } = filtrarAcertoParaUsuario(saldosAll, transfersAll);
       const total = abertas.reduce((acc, p) => acc + (Number(p.valor) || 0), 0);
       const linhas = [
         `*Entre nós — ${titulo}*`,
         `Abertas: ${formatMoney(total)} · ${abertas.length} de ${items.length}`,
+        isAdmin() ? "Visão admin" : "Só o que te envolve",
         "",
-        "*Acerto*",
+        "*Acerto* (cada pendência, sem compensar com terceiros)",
         ...textoLinhasTransferencias(transfers),
         "",
       ];
@@ -8132,7 +8374,8 @@
       .sort((a, b) => (b.data || "").localeCompare(a.data || ""))
       .forEach((item) => {
         const tipo = item.tipo === "mercado" ? "Mercado" : item.descricao || "Despesa";
-        linhas.push(`• ${formatDate(item.data)} — ${tipo}: ${formatMoney(item.valor)}`);
+        const obs = item.tipo === "mercado" && item.obs ? ` — ${item.obs}` : "";
+        linhas.push(`• ${formatDate(item.data)} — ${tipo}: ${formatMoney(item.valor)}${obs}`);
       });
     return linhas.join("\n").trim();
   }
@@ -8161,21 +8404,27 @@
       usePend ? "Entre nós" : null,
     ].filter(Boolean);
 
-    const saldos = calcularSaldosEncontro(mesId, {
+    const optsEnc = {
       casa: useCasa,
       vaquinha: useVaq,
       pendencias: usePend,
-    });
-    const transfers = calcularTransferencias(saldos);
+    };
+    const saldosAll = calcularSaldosEncontro(mesId, optsEnc);
+    const transfersAll = calcularTransferenciasEncontro(mesId, optsEnc);
+    const { saldos, transfers } = filtrarAcertoParaUsuario(saldosAll, transfersAll);
+    const visaoTxt = isAdmin()
+      ? "visão admin (todos)"
+      : "só o que te envolve";
 
     box.innerHTML = htmlBlocoAcerto({
       titulo: `Encontro — ${labelMes(mesId)}`,
-      meta: `${origens.join(" · ")} · saldo líquido (compensado entre as origens)`,
+      meta: `${origens.join(" · ")} · Entre nós sem atalho entre terceiros · ${visaoTxt}`,
       saldos,
       transfers,
-      vazio: !saldos.length,
+      vazio: !saldos.length && !transfers.length,
       mesId,
       escopo: "encontro",
+      conferenciaLinhas: linhasConferenciaEncontro(mesId, optsEnc),
     });
     bindQuitacaoButtons(box);
   }
@@ -8271,10 +8520,11 @@
         saldos,
         transfers,
         vazio: !items.length,
+        conferenciaLinhas: linhasConferenciaCasa(mesSelecionado),
       });
     }
 
-    $("#lancamentos-count").textContent = `${items.length} ite${items.length === 1 ? "m" : "ns"}`;
+    $("#lancamentos-count").textContent = String(items.length);
     const tbody = $("#tbody-lancamentos");
     const empty = $("#empty-lancamentos");
     const podeExcluir = mesEstaAberto(mesSelecionado);
@@ -8293,7 +8543,9 @@
 
         let detalhe = "";
         if (item.tipo === "mercado") {
+          const obs = String(item.obs || "").trim();
           detalhe = `${escapeHtml(labelComprador(item.comprador))}<br><span class="detalhe">${PAGAMENTOS[item.pagamento] || item.pagamento}</span>`;
+          if (obs) detalhe += `<br><span class="detalhe">${escapeHtml(obs)}</span>`;
         } else {
           const crit = item.criterio === "igual_3" ? "Partes iguais" : "Proporcional";
           const quem = item.comprador ? labelComprador(item.comprador) : null;
@@ -8368,8 +8620,9 @@
       .sort((a, b) => b.data.localeCompare(a.data));
     const acertosEncontro = atribuirAcertoVaquinhasDoEncontro(mesSelecionado);
     const emAberto = vaquinhas.filter((v) => (acertosEncontro[v.id]?.falta || 0) > 0.005).length;
-    const saldos = calcularSaldosPessoasVaquinha(mesSelecionado);
-    const transfers = calcularTransferencias(saldos);
+    const saldosAll = calcularSaldosPessoasVaquinha(mesSelecionado);
+    const transfersAll = calcularTransferencias(saldosAll);
+    const { saldos, transfers } = filtrarAcertoParaUsuario(saldosAll, transfersAll);
     const total = vaquinhas.reduce((acc, v) => acc + (Number(v.valor) || 0), 0);
     const tituloMes = mesSelecionado ? labelMes(mesSelecionado) : "Nenhum mês";
 
@@ -8382,11 +8635,14 @@
       </div>` +
       htmlBlocoAcerto({
         titulo: "Acerto das vaquinhas",
-        meta: "Quem passa pra quem nas vaquinhas deste mês (quite no Encontro).",
+        meta: isAdmin()
+          ? "Visão admin: quem passa pra quem nas vaquinhas deste mês."
+          : "Só transferências em que você entra (quite no Encontro).",
         saldos,
         transfers,
         vazio: !vaquinhas.length,
         mostrarCabecalho: false,
+        conferenciaLinhas: linhasConferenciaVaquinha(mesSelecionado),
       });
 
     $("#vaquinhas-rel-count").textContent = String(vaquinhas.length);
@@ -8522,13 +8778,14 @@
       .filter((p) => (p.data || "").slice(0, 7) === mesId)
       .sort((a, b) => (b.data || "").localeCompare(a.data || ""));
     const abertas = items.filter((p) => p.status === "pendente");
-    const saldos = calcularSaldosPendenciasMes(mesId);
-    const transfers = calcularTransferencias(saldos);
+    const saldosAll = calcularSaldosPendenciasMes(mesId);
+    const transfersAll = calcularTransferenciasPendenciasMes(mesId);
+    const { saldos, transfers } = filtrarAcertoParaUsuario(saldosAll, transfersAll);
     const total = abertas.reduce((acc, p) => acc + (Number(p.valor) || 0), 0);
     const tituloMes = mesId ? labelMes(mesId) : "Nenhum mês";
     const metaAcerto = isAdmin()
-      ? "Pendências abertas com data neste mês (visão admin)."
-      : "Só suas pendências abertas neste mês.";
+      ? "Visão admin: todas as pendências abertas neste mês — sem compensar com terceiros."
+      : "Só o que te envolve neste mês — cada pendência no seu fluxo.";
 
     $("#resumo-rel-pendencias").innerHTML =
       `
@@ -8542,8 +8799,9 @@
         meta: metaAcerto,
         saldos,
         transfers,
-        vazio: !abertas.length,
+        vazio: !abertas.length && !transfers.length,
         mostrarCabecalho: false,
+        conferenciaLinhas: linhasConferenciaPendencias(mesId),
       });
 
     $("#pendencias-rel-count").textContent = String(items.length);
@@ -8753,6 +9011,19 @@
       await startSync(codigoCasa);
       await pushToCloud();
       toast("Sincronização concluída.");
+    });
+
+    $("#visao-modo-admin")?.addEventListener("change", () => {
+      if (!$("#visao-modo-admin")?.checked) return;
+      if (!ehContaAdmin()) return;
+      setVisaoAdmin(true);
+      aplicarMudancaVisaoAdmin();
+    });
+    $("#visao-modo-usuario")?.addEventListener("change", () => {
+      if (!$("#visao-modo-usuario")?.checked) return;
+      if (!ehContaAdmin()) return;
+      setVisaoAdmin(false);
+      aplicarMudancaVisaoAdmin();
     });
 
     $("#btn-restaurar-backup")?.addEventListener("click", () => {

@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=63" />
+  <link rel="stylesheet" href="css/styles.css?v=70" />
 </head>
 <body>
   <!-- Login -->
@@ -136,6 +136,10 @@
           <label class="field">
             <span class="field__label">Valor total (R$)</span>
             <input type="text" class="input-money" id="mercado-valor" name="valor" inputmode="numeric" placeholder="0,00" required />
+          </label>
+          <label class="field">
+            <span class="field__label">Observação (opcional)</span>
+            <textarea id="mercado-obs" name="obs" rows="2" placeholder="Ex.: hortifruti, limpeza, sem notinha…" maxlength="500"></textarea>
           </label>
           <div class="field comprovante-field">
             <span class="field__label">Comprovante / notinha (opcional)</span>
@@ -663,48 +667,60 @@
         <div id="relatorio-casa" class="relatorio-bloco">
           <div id="resumo-cards" class="resumo"></div>
           <div id="resumo-acerto" class="resumo"></div>
-          <div class="section-head">
-            <h3 class="section-head__title">Lançamentos</h3>
-            <span id="lancamentos-count" class="section-head__meta">0 itens</span>
-          </div>
-          <div class="table-wrap">
-            <table class="table" id="tabela-lancamentos">
-              <thead>
-                <tr>
-                  <th>Data</th>
-                  <th>Tipo</th>
-                  <th>Detalhe</th>
-                  <th>Valor</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="tbody-lancamentos"></tbody>
-            </table>
-            <p id="empty-lancamentos" class="empty hidden">Nenhum lançamento neste mês.</p>
-          </div>
-          <button type="button" id="btn-limpar" class="btn btn--danger btn--block">
-            Limpar mercado e despesas do mês
-          </button>
+          <details class="conferencia-drop conferencia-drop--bloco">
+            <summary>
+              Conferência · lançamentos
+              <span id="lancamentos-count" class="conferencia-drop__count">0</span>
+            </summary>
+            <div class="conferencia-drop__body">
+              <div class="table-wrap">
+                <table class="table" id="tabela-lancamentos">
+                  <thead>
+                    <tr>
+                      <th>Data</th>
+                      <th>Tipo</th>
+                      <th>Detalhe</th>
+                      <th>Valor</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="tbody-lancamentos"></tbody>
+                </table>
+                <p id="empty-lancamentos" class="empty hidden">Nenhum lançamento neste mês.</p>
+              </div>
+              <button type="button" id="btn-limpar" class="btn btn--danger btn--block">
+                Limpar mercado e despesas do mês
+              </button>
+            </div>
+          </details>
         </div>
 
         <div id="relatorio-vaquinha" class="relatorio-bloco hidden">
           <div id="resumo-vaquinhas" class="resumo"></div>
-          <div class="section-head">
-            <h3 class="section-head__title">Vaquinhas do mês</h3>
-            <span id="vaquinhas-rel-count" class="section-head__meta">0</span>
-          </div>
-          <div id="lista-rel-vaquinhas" class="lista-mercado"></div>
-          <p id="empty-rel-vaquinhas" class="empty empty--sm hidden">Nenhuma vaquinha neste mês.</p>
+          <details class="conferencia-drop conferencia-drop--bloco">
+            <summary>
+              Conferência · vaquinhas
+              <span id="vaquinhas-rel-count" class="conferencia-drop__count">0</span>
+            </summary>
+            <div class="conferencia-drop__body">
+              <div id="lista-rel-vaquinhas" class="lista-mercado"></div>
+              <p id="empty-rel-vaquinhas" class="empty empty--sm hidden">Nenhuma vaquinha neste mês.</p>
+            </div>
+          </details>
         </div>
 
         <div id="relatorio-pendencias" class="relatorio-bloco hidden">
           <div id="resumo-rel-pendencias" class="resumo"></div>
-          <div class="section-head">
-            <h3 class="section-head__title">Pendências do mês</h3>
-            <span id="pendencias-rel-count" class="section-head__meta">0</span>
-          </div>
-          <div id="lista-rel-pendencias" class="lista-mercado"></div>
-          <p id="empty-rel-pendencias" class="empty empty--sm hidden">Nenhuma pendência com data neste mês.</p>
+          <details class="conferencia-drop conferencia-drop--bloco">
+            <summary>
+              Conferência · pendências
+              <span id="pendencias-rel-count" class="conferencia-drop__count">0</span>
+            </summary>
+            <div class="conferencia-drop__body">
+              <div id="lista-rel-pendencias" class="lista-mercado"></div>
+              <p id="empty-rel-pendencias" class="empty empty--sm hidden">Nenhuma pendência com data neste mês.</p>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -748,6 +764,35 @@
       <section id="tab-config" class="panel" role="tabpanel" hidden>
         <h2 class="panel__title">Configurações</h2>
         <p class="panel__hint">Usuários, grupos, tipos de despesa e sincronização.</p>
+
+        <div id="config-visao-admin" class="form hidden" style="margin-bottom:1.25rem">
+          <fieldset class="fieldset">
+            <legend class="fieldset__legend">Visão do administrador</legend>
+            <p class="fieldset__hint">
+              Escolha se vê todos os acertos e pendências (admin) ou só o que envolve você (como os demais usuários).
+              Cadastro de usuários e abrir/encerrar mês continuam disponíveis.
+            </p>
+            <p class="peso-total" style="margin-bottom:0.65rem">
+              Modo atual: <span id="config-visao-badge" class="badge badge--aberto">Admin (ver tudo)</span>
+            </p>
+            <div class="visao-admin-opcoes">
+              <label class="visao-admin-opcao">
+                <input type="radio" name="visao-modo" id="visao-modo-admin" value="admin" />
+                <span>
+                  <strong>Versão admin</strong>
+                  <small>Ver todos os saldos, transferências e pendências</small>
+                </span>
+              </label>
+              <label class="visao-admin-opcao">
+                <input type="radio" name="visao-modo" id="visao-modo-usuario" value="usuario" />
+                <span>
+                  <strong>Como usuário normal</strong>
+                  <small>Só o que te cabe no Encontro, Entre nós e relatórios de acerto</small>
+                </span>
+              </label>
+            </div>
+          </fieldset>
+        </div>
 
         <form id="form-pessoa" class="form hidden" style="margin-bottom:1.25rem" autocomplete="off">
           <fieldset class="fieldset">
@@ -911,7 +956,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
-  <script src="js/firebase-config.js?v=63"></script>
-  <script src="js/app.js?v=63"></script>
+  <script src="js/firebase-config.js?v=70"></script>
+  <script src="js/app.js?v=70"></script>
 </body>
 </html>
