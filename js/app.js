@@ -9,7 +9,7 @@
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
   const VISAO_ADMIN_KEY = "despesas_visao_admin";
-  const APP_BUILD = "v71";
+  const APP_BUILD = "v72";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -1046,10 +1046,19 @@
   }
 
   function mesAnteriorId(mesId) {
+    return shiftMonthId(mesId, -1);
+  }
+
+  function shiftMonthId(mesId, delta) {
     if (!mesId || !/^\d{4}-\d{2}$/.test(mesId)) return null;
     const [y, m] = mesId.split("-").map(Number);
-    const d = new Date(y, m - 2, 1);
+    const d = new Date(y, m - 1 + Number(delta || 0), 1);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
+
+  /** Pessoais só lança/edita no mês aberto do sistema (igual Mercado/Despesas). */
+  function podeLancarPessoalNoMes(mesId) {
+    return mesEstaAberto(mesId);
   }
 
   function fingerprintTransferencia(mesId, escopo, deId, paraId, valor) {
@@ -2806,7 +2815,7 @@
     renderPendencias();
     fillPendenciaPessoas();
     pessoalDonoId = pessoa.id;
-    pessoalMesId = currentMonthId();
+    pessoalMesId = state.mesAtual || currentMonthId();
     renderPessoal();
     fillConfigForm();
     setSyncStatus(syncStatus);
@@ -3965,6 +3974,8 @@
       renderMercadoLista();
       renderDespesaLista();
       renderEncontro();
+      pessoalMesId = state.mesAtual || pessoalMesId;
+      renderPessoal();
       toast(`${labelMes(id)} aberto.`);
     });
 
@@ -3991,6 +4002,7 @@
       renderMercadoLista();
       renderDespesaLista();
       renderEncontro();
+      renderPessoal();
       toast(`${aberto.label} encerrado.`);
     });
 
@@ -4154,7 +4166,22 @@
     const select = $("#pessoal-mes");
     if (!select) return;
     const donoId = pessoalDonoId || usuarioAtualId;
-    const meses = new Set([pessoalMesId || currentMonthId(), currentMonthId()]);
+    const meses = new Set();
+
+    (state.meses || []).forEach((m) => {
+      if (m?.id) meses.add(m.id);
+    });
+    if (state.mesAtual) meses.add(state.mesAtual);
+    meses.add(currentMonthId());
+    if (pessoalMesId) meses.add(pessoalMesId);
+
+    [currentMonthId(), pessoalMesId, state.mesAtual].filter(Boolean).forEach((id) => {
+      const ant = shiftMonthId(id, -1);
+      const prox = shiftMonthId(id, 1);
+      if (ant) meses.add(ant);
+      if (prox) meses.add(prox);
+    });
+
     (state.pessoais || [])
       .filter((p) => p.donoId === donoId)
       .forEach((p) => {
@@ -4167,10 +4194,26 @@
         const m = (p.data || "").slice(0, 7);
         if (m) meses.add(m);
       });
+
     const ordenados = [...meses].filter(Boolean).sort().reverse();
-    if (!ordenados.includes(pessoalMesId)) pessoalMesId = ordenados[0] || currentMonthId();
+    if (!ordenados.length) {
+      select.innerHTML = `<option value="">Nenhum mês</option>`;
+      pessoalMesId = null;
+      return;
+    }
+
+    if (!pessoalMesId || !ordenados.includes(pessoalMesId)) {
+      pessoalMesId = state.mesAtual || ordenados[0];
+    }
+
     select.innerHTML = ordenados
-      .map((id) => `<option value="${id}">${escapeHtml(labelMes(id))}</option>`)
+      .map((id) => {
+        const m = getMes(id);
+        let tag = "";
+        if (mesEstaAberto(id)) tag = " (aberto)";
+        else if (m) tag = " (fechado)";
+        return `<option value="${id}">${escapeHtml(labelMes(id))}${tag}</option>`;
+      })
       .join("");
     select.value = pessoalMesId;
   }
@@ -4437,7 +4480,7 @@
       });
   }
 
-  function renderPessoalFixas(donoId, podeEditar) {
+  function renderPessoalFixas(donoId, podeEditar, podePagarMes = podeEditar) {
     const box = $("#lista-pessoal-fixas");
     const empty = $("#empty-pessoal-fixas");
     const pendEl = $("#pessoal-fixas-pendentes");
@@ -4473,7 +4516,7 @@
         const cat = f.categoriaNome || labelCategoriaPessoal(f);
         const dia = f.diaVencimento ? `dia ${f.diaVencimento}` : "sem dia";
         let acao = "";
-        if (podeEditar) {
+        if (podeEditar && podePagarMes) {
           if (paga) {
             acao = `<span class="fixa-item__badge">Pago em ${escapeHtml(labelMes(mesId))}</span>
                <button type="button" class="btn btn--ghost btn--sm btn-desfazer-fixa" data-id="${f.id}">Desfazer</button>`;
@@ -4481,6 +4524,10 @@
             acao = `<select class="fixa-item__pag" data-id="${f.id}" aria-label="Forma de pagamento">${optsPag}</select>
                <button type="button" class="btn btn--primary btn--sm btn-pagar-fixa" data-id="${f.id}">Pagar</button>`;
           }
+        } else if (podeEditar && !podePagarMes) {
+          acao = paga
+            ? `<span class="fixa-item__badge">Pago em ${escapeHtml(labelMes(mesId))}</span>`
+            : `<span class="fixa-item__badge">Mês fechado</span>`;
         }
         const editar = podeEditar
           ? `<button type="button" class="btn btn--edit btn--sm btn-editar-fixa" data-id="${f.id}" title="Editar">✎</button>`
@@ -4568,6 +4615,9 @@
     );
     if (!fixa) return;
     const mesId = pessoalMesId || currentMonthId();
+    if (!podeLancarPessoalNoMes(mesId)) {
+      return toast("Só é possível desfazer pagamento no mês aberto do sistema.");
+    }
     const lanc = (state.pessoais || []).find(
       (p) =>
         p &&
@@ -4611,6 +4661,9 @@
     if (!fixa) return toast("Despesa fixa não encontrada.");
 
     const mesId = pessoalMesId || currentMonthId();
+    if (!podeLancarPessoalNoMes(mesId)) {
+      return toast("Só é possível pagar fixas no mês aberto do sistema.");
+    }
     if (fixaPagaNoMes(fixa.id, donoId, mesId)) {
       return toast("Esta fixa já foi paga neste mês.");
     }
@@ -5175,12 +5228,40 @@
 
     const podeVer = podeVerPessoalDe(donoId);
     const podeEditar = podeEditarPessoalDe(donoId);
+    const mesId = pessoalMesId || currentMonthId();
+    const mesLiberado = podeLancarPessoalNoMes(mesId);
+    const podeEditarLancamentos = podeEditar && mesLiberado;
     const souDono = donoId === u.id;
     const aviso = $("#aviso-pessoal-compartilhada");
+    const avisoMes = $("#aviso-pessoal-mes");
+
+    if (avisoMes) {
+      if (!state.mesAtual) {
+        avisoMes.textContent =
+          "Nenhum mês aberto no sistema. Dá para consultar o histórico; para lançar, abra um mês em Relatório/Config.";
+        avisoMes.classList.remove("hidden");
+      } else if (!mesLiberado) {
+        avisoMes.textContent = `${labelMes(mesId)} está fechado. Troque o mês para ${labelMes(
+          state.mesAtual
+        )} (aberto) para lançar, ou só consulte este mês.`;
+        avisoMes.classList.remove("hidden");
+      } else {
+        avisoMes.classList.add("hidden");
+      }
+    }
+
+    ["#form-pessoal", "#form-pessoal-receita"].forEach((sel) => {
+      const form = $(sel);
+      if (!form) return;
+      form.classList.toggle("is-disabled", !podeEditarLancamentos);
+      $$(`${sel} input, ${sel} select, ${sel} button`).forEach((el) => {
+        el.disabled = !podeEditarLancamentos;
+      });
+    });
 
     fillPessoalSelectsCadastro(donoId);
     renderPessoalCadastros(donoId, podeEditar);
-    renderPessoalFixas(donoId, podeEditar);
+    renderPessoalFixas(donoId, podeEditar, podeEditarLancamentos);
     renderPessoalDividas(donoId, souDono);
 
     aviso?.classList.toggle("hidden", souDono || !podeVer);
@@ -5207,8 +5288,6 @@
       if (porCatBox) porCatBox.innerHTML = "";
       return;
     }
-
-    const mesId = pessoalMesId || currentMonthId();
     const despesas = (state.pessoais || []).filter(
       (p) => p.donoId === donoId && (p.data || "").slice(0, 7) === mesId
     );
@@ -5393,12 +5472,12 @@
         if (!isRec) {
           const fotoBtn = htmlBtnComprovante(item, {
             kind: "pessoal",
-            canAdd: !!(podeEditar && !srcComprovante(item)),
-            canRemove: !!(podeEditar && srcComprovante(item)),
+            canAdd: !!(podeEditarLancamentos && !srcComprovante(item)),
+            canRemove: !!(podeEditarLancamentos && srcComprovante(item)),
           });
           if (fotoBtn) acoes.push(fotoBtn);
         }
-        if (podeEditar) {
+        if (podeEditarLancamentos) {
           acoes.push(
             `<button type="button" class="btn btn--edit btn--sm ${
               isRec ? "btn-editar-receita" : "btn-editar-pessoal"
@@ -5443,6 +5522,9 @@
         if (!item || !podeEditarPessoalDe(item.donoId)) {
           return toast("Sem permissão para excluir nesta lista.");
         }
+        if (!podeLancarPessoalNoMes((item.data || "").slice(0, 7))) {
+          return toast("Só é possível excluir lançamentos do mês aberto.");
+        }
         if (!confirm(`Excluir despesa "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
         if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
         const autor = usuarioAtual();
@@ -5469,6 +5551,9 @@
         const item = (state.pessoalReceitas || []).find((p) => p.id === btn.dataset.id);
         if (!item || !podeEditarPessoalDe(item.donoId)) {
           return toast("Sem permissão para excluir nesta lista.");
+        }
+        if (!podeLancarPessoalNoMes((item.data || "").slice(0, 7))) {
+          return toast("Só é possível excluir lançamentos do mês aberto.");
         }
         if (!confirm(`Excluir receita "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
         const autor = usuarioAtual();
@@ -5528,6 +5613,9 @@
     const item = (state.pessoais || []).find((p) => p.id === id);
     if (!item) return;
     if (!podeEditarPessoalDe(item.donoId)) return toast("Sem permissão.");
+    if (!podeLancarPessoalNoMes((item.data || "").slice(0, 7))) {
+      return toast("Só é possível editar lançamentos do mês aberto.");
+    }
     editingReceitaId = null;
     limparEdicaoReceita();
     editingPessoalId = item.id;
@@ -5570,6 +5658,9 @@
     const item = (state.pessoalReceitas || []).find((p) => p.id === id);
     if (!item) return;
     if (!podeEditarPessoalDe(item.donoId)) return toast("Sem permissão.");
+    if (!podeLancarPessoalNoMes((item.data || "").slice(0, 7))) {
+      return toast("Só é possível editar lançamentos do mês aberto.");
+    }
     editingPessoalId = null;
     limparEdicaoPessoal();
     editingReceitaId = item.id;
@@ -5663,6 +5754,9 @@
     $("#pessoal-mes")?.addEventListener("change", (e) => {
       pessoalMesId = e.target.value || currentMonthId();
       pessoalFiltroCategoria = "";
+      limparEdicaoPessoal();
+      limparEdicaoReceita();
+      limparEdicaoFixa(pessoalDonoId || usuarioAtualId);
       renderPessoal();
     });
 
@@ -5748,6 +5842,13 @@
 
       if (!descricao || !data || !(valor > 0)) {
         return toast("Preencha descrição, data e valor.");
+      }
+      if (!podeLancarPessoalNoMes(data.slice(0, 7))) {
+        return toast(
+          state.mesAtual
+            ? `Só é possível lançar no mês aberto (${labelMes(state.mesAtual)}).`
+            : "Abra um mês no sistema antes de lançar em Pessoais."
+        );
       }
       if (!tipo || !categoria || !pagamento) {
         return toast("Selecione tipo, categoria e forma de pagamento.");
@@ -5863,6 +5964,13 @@
 
       if (!descricao || !data || !(valor > 0)) {
         return toast("Preencha descrição, data e valor da receita.");
+      }
+      if (!podeLancarPessoalNoMes(data.slice(0, 7))) {
+        return toast(
+          state.mesAtual
+            ? `Só é possível lançar no mês aberto (${labelMes(state.mesAtual)}).`
+            : "Abra um mês no sistema antes de lançar em Pessoais."
+        );
       }
       if (!tipo || !pagamento) {
         return toast("Selecione tipo de receita e forma de recebimento.");
