@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/styles.css?v=74" />
+  <link rel="stylesheet" href="css/styles.css?v=75" />
 </head>
 <body>
   <!-- Login -->
@@ -580,10 +580,22 @@
 
           <details class="pessoal-acordeon pessoal-acordeon--nested">
             <summary class="pessoal-acordeon__summary">Formas de pagamento / recebimento</summary>
+            <p class="fieldset__hint" style="margin:0.75rem 0 0">
+              Cadastre o nome (ex.: Crédito C6, Bradesco) e o tipo. Despesas em
+              <strong>crédito</strong> não abatem o saldo atual — ficam como a faturar.
+            </p>
             <div class="row-add" style="margin-top:0.75rem">
               <label class="field field--grow">
                 <span class="field__label">Nome</span>
-                <input type="text" id="pessoal-pag-nome" placeholder="Ex: PIX, Folha, Conta" />
+                <input type="text" id="pessoal-pag-nome" placeholder="Ex: Crédito C6, Bradesco, Dinheiro" />
+              </label>
+              <label class="field">
+                <span class="field__label">Tipo</span>
+                <select id="pessoal-pag-tipo">
+                  <option value="dinheiro">Dinheiro</option>
+                  <option value="debito">Débito</option>
+                  <option value="credito">Crédito</option>
+                </select>
               </label>
               <button type="button" id="btn-add-pessoal-pag" class="btn btn--secondary">Adicionar</button>
             </div>
@@ -609,6 +621,7 @@
                 <option value="todos">Todos</option>
                 <option value="despesas">Despesas</option>
                 <option value="receitas">Receitas</option>
+                <option value="credito">Crédito a faturar</option>
                 <option value="fixas">Só fixas</option>
               </select>
             </label>
@@ -958,7 +971,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
-  <script src="js/firebase-config.js?v=74"></script>
-  <script src="js/app.js?v=74"></script>
+  <script src="js/firebase-config.js?v=75"></script>
+  <script src="js/app.js?v=75"></script>
 </body>
 </html>

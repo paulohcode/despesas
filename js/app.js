@@ -9,7 +9,7 @@
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
   const VISAO_ADMIN_KEY = "despesas_visao_admin";
-  const APP_BUILD = "v74";
+  const APP_BUILD = "v75";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -43,7 +43,18 @@
     "Vestuário",
     "Outros",
   ];
-  const DEFAULT_PESSOAL_PAGAMENTOS = ["PIX", "Crédito", "Débito", "Dinheiro"];
+  /** Formas padrão: nome + tipo (dinheiro | debito | credito). Crédito não abate o saldo. */
+  const DEFAULT_PESSOAL_PAGAMENTOS = [
+    { nome: "PIX", tipo: "dinheiro" },
+    { nome: "Crédito", tipo: "credito" },
+    { nome: "Débito", tipo: "debito" },
+    { nome: "Dinheiro", tipo: "dinheiro" },
+  ];
+  const TIPOS_PAGAMENTO_PESSOAL = {
+    dinheiro: "Dinheiro",
+    debito: "Débito",
+    credito: "Crédito",
+  };
 
   const MESES_NOME = [
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -4194,8 +4205,14 @@
     const seed = (chave, nomes) => {
       if ((state[chave] || []).some((x) => x.donoId === donoId)) return;
       if (!Array.isArray(state[chave])) state[chave] = [];
-      nomes.forEach((nome) => {
-        state[chave].push({ id: uid(), donoId, nome });
+      nomes.forEach((entry) => {
+        if (typeof entry === "string") {
+          state[chave].push({ id: uid(), donoId, nome: entry });
+          return;
+        }
+        const item = { id: uid(), donoId, nome: entry.nome };
+        if (entry.tipo) item.tipo = normalizarTipoPagamento(entry.tipo);
+        state[chave].push(item);
       });
       mudou = true;
     };
@@ -4203,6 +4220,64 @@
     seed("pessoalTiposReceita", DEFAULT_PESSOAL_TIPOS_RECEITA);
     seed("pessoalCategorias", DEFAULT_PESSOAL_CATEGORIAS);
     seed("pessoalPagamentos", DEFAULT_PESSOAL_PAGAMENTOS);
+    if (normalizarTiposPagamentoPessoal(donoId)) mudou = true;
+    return mudou;
+  }
+
+  function normalizarTipoPagamento(tipo) {
+    const t = String(tipo || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    if (t === "credito" || t === "credit") return "credito";
+    if (t === "debito" || t === "debit") return "debito";
+    if (t === "dinheiro" || t === "pix" || t === "especie" || t === "cash") return "dinheiro";
+    return "dinheiro";
+  }
+
+  function inferTipoPagamentoNome(nome) {
+    const n = String(nome || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    if (/\bcredit/.test(n) || n.includes("fatura") || n.includes("cartao")) return "credito";
+    if (/\bdebit/.test(n)) return "debito";
+    return "dinheiro";
+  }
+
+  function labelTipoPagamento(tipo) {
+    return TIPOS_PAGAMENTO_PESSOAL[normalizarTipoPagamento(tipo)] || "Dinheiro";
+  }
+
+  /** Tipo efetivo da forma usada no lançamento (salvo no item ou no cadastro). */
+  function tipoPagamentoPessoal(item) {
+    if (!item) return "dinheiro";
+    if (item.pagamentoTipo) return normalizarTipoPagamento(item.pagamentoTipo);
+    if (item.pagamentoId) {
+      const p = (state.pessoalPagamentos || []).find((x) => x && x.id === item.pagamentoId);
+      if (p?.tipo) return normalizarTipoPagamento(p.tipo);
+      if (p?.nome) return inferTipoPagamentoNome(p.nome);
+    }
+    return inferTipoPagamentoNome(item.pagamentoNome || item.pagamento);
+  }
+
+  function despesaAbateSaldo(item) {
+    return tipoPagamentoPessoal(item) !== "credito";
+  }
+
+  /** Garante tipo em formas antigas (só nome). */
+  function normalizarTiposPagamentoPessoal(donoId = null) {
+    let mudou = false;
+    (state.pessoalPagamentos || []).forEach((p) => {
+      if (!p || (donoId && p.donoId !== donoId)) return;
+      const tipo = p.tipo
+        ? normalizarTipoPagamento(p.tipo)
+        : inferTipoPagamentoNome(p.nome);
+      if (p.tipo !== tipo) {
+        p.tipo = tipo;
+        mudou = true;
+      }
+    });
     return mudou;
   }
 
@@ -4337,19 +4412,27 @@
     const cats = listaCadastroPessoal("pessoalCategorias", donoId);
     const pags = listaCadastroPessoal("pessoalPagamentos", donoId);
 
-    const fillSelect = (sel, items, prev) => {
+    const fillSelect = (sel, items, prev, labelFn) => {
       if (!sel) return;
       sel.innerHTML =
         `<option value="">Selecione…</option>` +
-        items.map((t) => `<option value="${t.id}">${escapeHtml(t.nome)}</option>`).join("");
+        items
+          .map((t) => {
+            const label = labelFn ? labelFn(t) : t.nome;
+            return `<option value="${t.id}">${escapeHtml(label)}</option>`;
+          })
+          .join("");
       if (prev && items.some((t) => t.id === prev)) sel.value = prev;
     };
 
+    const labelPag = (p) =>
+      `${p.nome} (${labelTipoPagamento(p.tipo || inferTipoPagamentoNome(p.nome))})`;
+
     fillSelect($("#pessoal-tipo"), tipos, $("#pessoal-tipo")?.value);
     fillSelect($("#pessoal-categoria"), cats, $("#pessoal-categoria")?.value);
-    fillSelect($("#pessoal-pagamento"), pags, $("#pessoal-pagamento")?.value);
+    fillSelect($("#pessoal-pagamento"), pags, $("#pessoal-pagamento")?.value, labelPag);
     fillSelect($("#receita-tipo"), tiposRec, $("#receita-tipo")?.value);
-    fillSelect($("#receita-pagamento"), pags, $("#receita-pagamento")?.value);
+    fillSelect($("#receita-pagamento"), pags, $("#receita-pagamento")?.value, labelPag);
     fillSelect($("#fixa-tipo"), tipos, $("#fixa-tipo")?.value);
     fillSelect($("#fixa-categoria"), cats, $("#fixa-categoria")?.value);
 
@@ -4361,7 +4444,7 @@
     }
   }
 
-  function renderListaCadastroPessoal({ chave, listaId, emptyId, btnClass, podeEditar }) {
+  function renderListaCadastroPessoal({ chave, listaId, emptyId, btnClass, podeEditar, labelFn }) {
     const lista = $(listaId);
     const empty = $(emptyId);
     if (!lista || !empty) return;
@@ -4378,7 +4461,7 @@
       .map(
         (item) => `
       <li class="lista-pessoas__item">
-        <span>${escapeHtml(item.nome)}</span>
+        <span>${escapeHtml(labelFn ? labelFn(item) : item.nome)}</span>
         ${
           podeEditar
             ? `<button type="button" class="btn btn--icon ${btnClass}" data-id="${item.id}" title="Remover">×</button>`
@@ -4446,6 +4529,8 @@
       emptyId: "#empty-pessoal-pags",
       btnClass: "btn-rm-pessoal-pag",
       podeEditar,
+      labelFn: (item) =>
+        `${item.nome} · ${labelTipoPagamento(item.tipo || inferTipoPagamentoNome(item.nome))}`,
     });
   }
 
@@ -4470,6 +4555,31 @@
     saveState();
     renderPessoal();
     toast(`${nome} adicionado.`);
+  }
+
+  function adicionarPagamentoPessoal() {
+    const u = usuarioAtual();
+    if (!u) return;
+    const donoId = pessoalDonoId || u.id;
+    if (!podeEditarPessoalDe(donoId)) return toast("Sem permissão.");
+    const input = $("#pessoal-pag-nome");
+    const nome = (input?.value || "").trim().replace(/\s+/g, " ");
+    const tipo = normalizarTipoPagamento($("#pessoal-pag-tipo")?.value || "dinheiro");
+    if (!nome) return toast("Informe o nome da forma de pagamento.");
+    if (!Array.isArray(state.pessoalPagamentos)) state.pessoalPagamentos = [];
+    if (
+      state.pessoalPagamentos.some(
+        (x) => x.donoId === donoId && x.nome.toLowerCase() === nome.toLowerCase()
+      )
+    ) {
+      return toast("Já cadastrado.");
+    }
+    state.pessoalPagamentos.push({ id: uid(), donoId, nome, tipo });
+    if (input) input.value = "";
+    if ($("#pessoal-pag-tipo")) $("#pessoal-pag-tipo").value = "dinheiro";
+    saveState();
+    renderPessoal();
+    toast(`${nome} (${labelTipoPagamento(tipo)}) adicionado.`);
   }
 
   function renderPessoalAcessos() {
@@ -4588,7 +4698,12 @@
 
     const optsPag =
       `<option value="">Pagamento…</option>` +
-      pags.map((p) => `<option value="${p.id}">${escapeHtml(p.nome)}</option>`).join("");
+      pags
+        .map((p) => {
+          const tipo = labelTipoPagamento(p.tipo || inferTipoPagamentoNome(p.nome));
+          return `<option value="${p.id}">${escapeHtml(p.nome)} (${escapeHtml(tipo)})</option>`;
+        })
+        .join("");
 
     box.innerHTML = fixas
       .map((f) => {
@@ -4779,6 +4894,9 @@
       pagamentoId: pagamento.id,
       pagamentoNome: pagamento.nome,
       pagamento: pagamento.nome,
+      pagamentoTipo: normalizarTipoPagamento(
+        pagamento.tipo || inferTipoPagamentoNome(pagamento.nome)
+      ),
       valor,
       fixaId: fixa.id,
       criadoPorId: u.id,
@@ -4871,18 +4989,25 @@
     const receitas = (state.pessoalReceitas || []).filter(
       (p) => p && p.donoId === donoId && (p.data || "").slice(0, 7) === mesId
     );
-    const totalDesp = despesas.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
+    let totalDesp = 0;
+    let totalCredito = 0;
+    despesas.forEach((i) => {
+      const v = Number(i.valor) || 0;
+      if (despesaAbateSaldo(i)) totalDesp += v;
+      else totalCredito += v;
+    });
     const totalRec = receitas.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
     return {
       despesas,
       receitas,
       totalDesp,
+      totalCredito,
       totalRec,
       saldoMes: totalRec - totalDesp,
     };
   }
 
-  /** Saldo acumulado de todos os meses anteriores ao informado (receitas − despesas). */
+  /** Saldo acumulado de todos os meses anteriores ao informado (receitas − despesas que abatem). */
   function saldoPessoalAnterior(donoId, mesId) {
     if (!donoId || !mesId) return 0;
     let desp = 0;
@@ -4890,7 +5015,7 @@
     (state.pessoais || []).forEach((p) => {
       if (!p || p.donoId !== donoId) return;
       const m = (p.data || "").slice(0, 7);
-      if (m && m < mesId) desp += Number(p.valor) || 0;
+      if (m && m < mesId && despesaAbateSaldo(p)) desp += Number(p.valor) || 0;
     });
     (state.pessoalReceitas || []).forEach((p) => {
       if (!p || p.donoId !== donoId) return;
@@ -5476,7 +5601,7 @@
       if (porCatBox) porCatBox.innerHTML = "";
       return;
     }
-    const { despesas, receitas, totalDesp, totalRec, saldoMes } = totaisPessoalMes(
+    const { despesas, receitas, totalDesp, totalCredito, totalRec, saldoMes } = totaisPessoalMes(
       donoId,
       mesId
     );
@@ -5511,6 +5636,10 @@
       filtrados = filtrados.filter((i) => i._kind === "receita");
     } else if (pessoalFiltroTipo === "fixas") {
       filtrados = filtrados.filter((i) => i._kind === "despesa" && i.fixaId);
+    } else if (pessoalFiltroTipo === "credito") {
+      filtrados = filtrados.filter(
+        (i) => i._kind === "despesa" && !despesaAbateSaldo(i)
+      );
     }
     if (pessoalFiltroCategoria) {
       filtrados = filtrados.filter(
@@ -5523,7 +5652,7 @@
     if (countEl) countEl.textContent = String(filtrados.length);
 
     if (totalBox) {
-      if (!items.length && Math.abs(saldoAnterior) < 0.005) {
+      if (!items.length && Math.abs(saldoAnterior) < 0.005 && totalCredito < 0.005) {
         totalBox.classList.add("hidden");
         totalBox.innerHTML = "";
       } else {
@@ -5534,14 +5663,19 @@
         const tituloLista = souDono ? "Minha lista" : `Lista de ${donoNome}`;
         const saldoClass =
           saldo > 0.004 ? "saldo--receber" : saldo < -0.004 ? "saldo--pagar" : "saldo--ok";
+        const creditoHint =
+          totalCredito > 0.004
+            ? `<p class="mercado-total__label" style="margin-top:0.35rem">Crédito a faturar neste mês: ${formatMoney(totalCredito)}</p>`
+            : "";
         totalBox.innerHTML = `
           <p class="mercado-total__label">${escapeHtml(tituloLista)} · ${escapeHtml(labelMes(mesId))} · saldo acumulado</p>
-          <p class="mercado-total__valor ${saldoClass}">${formatMoney(saldo)}</p>`;
+          <p class="mercado-total__valor ${saldoClass}">${formatMoney(saldo)}</p>
+          ${creditoHint}`;
       }
     }
 
     if (resumoBox) {
-      if (!items.length && Math.abs(saldoAnterior) < 0.005) {
+      if (!items.length && Math.abs(saldoAnterior) < 0.005 && totalCredito < 0.005) {
         resumoBox.innerHTML = "";
       } else {
         const saldoAntClass =
@@ -5570,8 +5704,14 @@
               <p class="card-grupo__valor saldo--receber">${formatMoney(totalRec)}</p>
             </div>
             <div class="card-grupo">
-              <p class="card-grupo__nome">Despesas</p>
+              <p class="card-grupo__nome">Despesas (saíram do saldo)</p>
               <p class="card-grupo__valor saldo--pagar">${formatMoney(totalDesp)}</p>
+              <p class="card-grupo__peso">Dinheiro / débito / PIX</p>
+            </div>
+            <div class="card-grupo">
+              <p class="card-grupo__nome">Crédito a faturar</p>
+              <p class="card-grupo__valor">${formatMoney(totalCredito)}</p>
+              <p class="card-grupo__peso">Não abate o saldo atual</p>
             </div>
             <div class="card-grupo">
               <p class="card-grupo__nome">Movimento do mês</p>
@@ -5636,6 +5776,7 @@
     box.innerHTML = filtrados
       .map((item) => {
         const isRec = item._kind === "receita";
+        const isCredito = !isRec && !despesaAbateSaldo(item);
         const tipo = isRec ? labelTipoReceita(item) : labelTipoPessoal(item);
         const pag = labelPagamentoPessoal(item);
         const cat = isRec ? "" : ` · ${labelCategoriaPessoal(item)}`;
@@ -5662,17 +5803,28 @@
             }" data-id="${item.id}" title="Excluir" aria-label="Excluir">×</button>`
           );
         }
-        const valorClass = isRec ? "saldo--receber" : "saldo--pagar";
-        const sinal = isRec ? "+" : "−";
+        const valorClass = isRec
+          ? "saldo--receber"
+          : isCredito
+            ? "pessoal-linha__valor--credito"
+            : "saldo--pagar";
+        const sinal = isRec ? "+" : isCredito ? "" : "−";
         const dataCurta = formatDate(item.data);
+        const badgeCredito = isCredito
+          ? ` <span class="badge badge--credito" title="Não abate o saldo atual">A faturar</span>`
+          : "";
         const detalhes = `${tipo}${cat} · ${pag}${
           item.criadoPorNome ? ` · ${item.criadoPorNome}` : ""
         }`;
         return `
-      <article class="pessoal-linha ${isRec ? "pessoal-linha--receita" : ""}">
+      <article class="pessoal-linha ${isRec ? "pessoal-linha--receita" : ""}${
+          isCredito ? " pessoal-linha--credito" : ""
+        }">
         <div class="pessoal-linha__texto">
-          <p class="pessoal-linha__titulo">${escapeHtml(item.descricao)}</p>
-          <p class="pessoal-linha__meta">${escapeHtml(dataCurta)} · ${escapeHtml(detalhes)}</p>
+          <p class="pessoal-linha__titulo">${escapeHtml(item.descricao)}${badgeCredito}</p>
+          <p class="pessoal-linha__meta">${escapeHtml(dataCurta)} · ${escapeHtml(detalhes)}${
+          isCredito ? " · ainda a pagar" : ""
+        }</p>
         </div>
         <p class="pessoal-linha__valor ${valorClass}">${sinal}${formatMoney(item.valor)}</p>
         <div class="pessoal-linha__acoes">${acoes.join("")}</div>
@@ -5994,9 +6146,7 @@
     $("#btn-add-pessoal-cat")?.addEventListener("click", () =>
       adicionarCadastroPessoal("pessoalCategorias", "#pessoal-cat-nome", "a categoria")
     );
-    $("#btn-add-pessoal-pag")?.addEventListener("click", () =>
-      adicionarCadastroPessoal("pessoalPagamentos", "#pessoal-pag-nome", "a forma")
-    );
+    $("#btn-add-pessoal-pag")?.addEventListener("click", () => adicionarPagamentoPessoal());
 
     ["#pessoal-tipo-nome", "#pessoal-tipo-rec-nome", "#pessoal-cat-nome", "#pessoal-pag-nome"].forEach(
       (sel) => {
@@ -6059,6 +6209,9 @@
         pagamentoId: pagamento.id,
         pagamentoNome: pagamento.nome,
         pagamento: pagamento.nome,
+        pagamentoTipo: normalizarTipoPagamento(
+          pagamento.tipo || inferTipoPagamentoNome(pagamento.nome)
+        ),
         valor,
       };
 
@@ -6178,6 +6331,9 @@
         pagamentoId: pagamento.id,
         pagamentoNome: pagamento.nome,
         pagamento: pagamento.nome,
+        pagamentoTipo: normalizarTipoPagamento(
+          pagamento.tipo || inferTipoPagamentoNome(pagamento.nome)
+        ),
         valor,
       };
 

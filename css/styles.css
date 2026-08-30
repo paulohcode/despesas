@@ -922,6 +922,15 @@ select {
   background: color-mix(in srgb, var(--brand-soft) 40%, #fff);
 }
 
+.pessoal-linha--credito {
+  border-color: color-mix(in srgb, #c98a2e 45%, var(--line));
+  background: #fffaf0;
+}
+
+.pessoal-linha__valor--credito {
+  color: #8a5500;
+}
+
 .pessoal-linha__texto {
   flex: 1 1 0;
   min-width: 0;
@@ -1305,6 +1314,13 @@ select {
 .badge--vaquinha {
   background: #e4e0f4;
   color: #4a3d7a;
+}
+
+.badge--credito {
+  background: #fde8c8;
+  color: #8a5500;
+  margin-left: 0.35rem;
+  vertical-align: middle;
 }
 
 .grupos-config {
