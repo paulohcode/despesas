@@ -9,7 +9,7 @@
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
   const VISAO_ADMIN_KEY = "despesas_visao_admin";
-  const APP_BUILD = "v72";
+  const APP_BUILD = "v74";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -3039,7 +3039,17 @@
       if (aberto) {
         acoesAdmin = `<button type="button" class="btn btn--secondary btn--sm btn-mes-topo-fechar">Encerrar mês</button>`;
       } else {
-        acoesAdmin = `<button type="button" class="btn btn--primary btn--sm btn-mes-topo-abrir">Abrir mês</button>`;
+        const selFechado = getMes(mesSelecionado);
+        const podeReabrirTopo = selFechado && selFechado.status === "fechado";
+        acoesAdmin = `
+          <button type="button" class="btn btn--primary btn--sm btn-mes-topo-abrir">Abrir mês</button>
+          ${
+            podeReabrirTopo
+              ? `<button type="button" class="btn btn--secondary btn--sm btn-mes-topo-reabrir">Reabrir ${escapeHtml(
+                  labelMes(mesSelecionado)
+                )}</button>`
+              : ""
+          }`;
       }
     }
 
@@ -3081,6 +3091,9 @@
     box.querySelector(".btn-mes-topo-abrir")?.addEventListener("click", () => {
       $("#btn-abrir-mes")?.click();
     });
+    box.querySelector(".btn-mes-topo-reabrir")?.addEventListener("click", () => {
+      $("#btn-reabrir-mes")?.click();
+    });
     box.querySelector(".btn-mes-topo-fechar")?.addEventListener("click", () => {
       $("#btn-fechar-mes")?.click();
     });
@@ -3105,15 +3118,26 @@
 
     const btnFechar = $("#btn-fechar-mes");
     const btnAbrir = $("#btn-abrir-mes");
+    const btnReabrir = $("#btn-reabrir-mes");
+    const mesSel = getMes(mesSelecionado);
+    const podeReabrir =
+      admin && !aberto && mesSel && mesSel.status === "fechado";
     if (btnFechar) btnFechar.disabled = !aberto || !admin;
     if (btnAbrir) btnAbrir.disabled = !admin;
+    if (btnReabrir) {
+      btnReabrir.disabled = !podeReabrir;
+      btnReabrir.classList.toggle("hidden", !admin);
+      btnReabrir.textContent = podeReabrir
+        ? `Reabrir ${labelMes(mesSelecionado)}`
+        : "Reabrir mês";
+    }
     const hintMes = $("#hint-mes-admin");
     if (hintMes) {
       hintMes.textContent = admin
         ? visaoAdminAtiva
-          ? "Visão admin: você vê todos os acertos. Em Config pode mudar para visão de usuário."
+          ? "Visão admin: você vê todos os acertos. Em Config pode mudar para visão de usuário. Use Reabrir no mês fechado selecionado acima."
           : "Visão de usuário: você só vê o que te envolve. Em Config volte para visão admin."
-        : "Somente Paulo (admin) pode abrir e encerrar o mês.";
+        : "Somente Paulo (admin) pode abrir, reabrir e encerrar o mês.";
     }
 
     $$("#form-pessoa input, #form-pessoa button").forEach((el) => {
@@ -3910,6 +3934,7 @@
 
     $("#filtro-mes").addEventListener("change", (e) => {
       mesSelecionado = e.target.value || null;
+      updateMesStatus();
       renderRelatorio();
       syncEncontroMes();
       renderEncontro();
@@ -3923,6 +3948,72 @@
     });
 
     $("#btn-cancelar-abrir").addEventListener("click", () => $("#modal-abrir-mes").close());
+
+    function aplicarMesAberto(id, { reabertura = false } = {}) {
+      const autor = autorMeta();
+      const existente = getMes(id);
+      if (existente) {
+        existente.status = "aberto";
+        existente.label = existente.label || labelMes(id);
+        existente.abertoEm = new Date().toISOString();
+        existente.abertoPorNome = autor.lancadoPorNome;
+        if (reabertura) {
+          existente.reabertoEm = new Date().toISOString();
+          existente.reabertoPorNome = autor.lancadoPorNome;
+        }
+        existente.fechadoEm = null;
+        existente.fechadoPorNome = null;
+      } else {
+        state.meses.unshift({
+          id,
+          label: labelMes(id),
+          status: "aberto",
+          abertoEm: new Date().toISOString(),
+          abertoPorNome: autor.lancadoPorNome,
+          fechadoEm: null,
+        });
+      }
+      state.mesAtual = id;
+      mesSelecionado = id;
+      notificarTodosExceto(autor.lancadoPorId, {
+        titulo: reabertura ? "Mês reaberto" : "Mês aberto",
+        texto: `${autor.lancadoPorNome} ${reabertura ? "reabriu" : "abriu"} ${labelMes(id)}.`,
+        tipo: "mes",
+      });
+      saveState();
+      updateNotifBadge();
+      updateMesStatus();
+      fillFiltroMes();
+      renderRelatorio();
+      renderMercadoLista();
+      renderDespesaLista();
+      renderVaquinhaLista();
+      renderEncontro();
+      pessoalMesId = state.mesAtual || pessoalMesId;
+      renderPessoal();
+      toast(reabertura ? `${labelMes(id)} reaberto.` : `${labelMes(id)} aberto.`);
+    }
+
+    function reabrirMesSelecionado() {
+      if (!ehContaAdmin()) return toast("Somente Paulo pode reabrir o mês.");
+      if (state.mesAtual) {
+        return toast(`Feche ${labelMes(state.mesAtual)} antes de reabrir outro.`);
+      }
+      const id = mesSelecionado;
+      const mes = getMes(id);
+      if (!id || !mes) return toast("Selecione um mês fechado no relatório.");
+      if (mes.status !== "fechado") return toast("Só é possível reabrir um mês fechado.");
+      if (
+        !confirm(
+          `Reabrir ${labelMes(id)}?\nSerá possível lançar mercado, despesas, vaquinhas e pessoais neste mês de novo.`
+        )
+      ) {
+        return;
+      }
+      aplicarMesAberto(id, { reabertura: true });
+    }
+
+    $("#btn-reabrir-mes")?.addEventListener("click", () => reabrirMesSelecionado());
 
     $("#form-abrir-mes").addEventListener("submit", (e) => {
       e.preventDefault();
@@ -3941,49 +4032,38 @@
       }
       const existente = getMes(id);
       if (existente && existente.status === "fechado") {
-        erro.textContent = "Este mês já foi fechado.";
-        erro.classList.remove("hidden");
+        if (
+          !confirm(
+            `${labelMes(id)} já foi fechado.\nDeseja reabrir este mês para novos lançamentos?`
+          )
+        ) {
+          return;
+        }
+        $("#modal-abrir-mes").close();
+        aplicarMesAberto(id, { reabertura: true });
         return;
       }
-      const autor = autorMeta();
       if (existente && existente.status === "aberto") {
         state.mesAtual = id;
-      } else {
-        state.meses.unshift({
-          id,
-          label: labelMes(id),
-          status: "aberto",
-          abertoEm: new Date().toISOString(),
-          abertoPorNome: autor.lancadoPorNome,
-          fechadoEm: null,
-        });
-        state.mesAtual = id;
+        mesSelecionado = id;
+        saveState();
+        $("#modal-abrir-mes").close();
+        updateMesStatus();
+        fillFiltroMes();
+        renderRelatorio();
+        renderPessoal();
+        toast(`${labelMes(id)} já estava aberto.`);
+        return;
       }
-      mesSelecionado = id;
-      notificarTodosExceto(autor.lancadoPorId, {
-        titulo: "Mês aberto",
-        texto: `${autor.lancadoPorNome} abriu ${labelMes(id)}.`,
-        tipo: "mes",
-      });
-      saveState();
-      updateNotifBadge();
       $("#modal-abrir-mes").close();
-      updateMesStatus();
-      fillFiltroMes();
-      renderRelatorio();
-      renderMercadoLista();
-      renderDespesaLista();
-      renderEncontro();
-      pessoalMesId = state.mesAtual || pessoalMesId;
-      renderPessoal();
-      toast(`${labelMes(id)} aberto.`);
+      aplicarMesAberto(id, { reabertura: false });
     });
 
     $("#btn-fechar-mes").addEventListener("click", () => {
       if (!ehContaAdmin()) return toast("Somente Paulo pode encerrar o mês.");
       const aberto = mesAberto();
       if (!aberto) return toast("Não há mês aberto.");
-      if (!confirm(`Encerrar ${aberto.label}? Não será possível lançar mercado/despesas/vaquinha até abrir outro.`)) return;
+      if (!confirm(`Encerrar ${aberto.label}? Não será possível lançar mercado/despesas/vaquinha até abrir ou reabrir um mês.`)) return;
       const autor = autorMeta();
       aberto.status = "fechado";
       aberto.fechadoEm = new Date().toISOString();
@@ -4784,6 +4864,104 @@
     };
   }
 
+  function totaisPessoalMes(donoId, mesId) {
+    const despesas = (state.pessoais || []).filter(
+      (p) => p && p.donoId === donoId && (p.data || "").slice(0, 7) === mesId
+    );
+    const receitas = (state.pessoalReceitas || []).filter(
+      (p) => p && p.donoId === donoId && (p.data || "").slice(0, 7) === mesId
+    );
+    const totalDesp = despesas.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
+    const totalRec = receitas.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
+    return {
+      despesas,
+      receitas,
+      totalDesp,
+      totalRec,
+      saldoMes: totalRec - totalDesp,
+    };
+  }
+
+  /** Saldo acumulado de todos os meses anteriores ao informado (receitas − despesas). */
+  function saldoPessoalAnterior(donoId, mesId) {
+    if (!donoId || !mesId) return 0;
+    let desp = 0;
+    let rec = 0;
+    (state.pessoais || []).forEach((p) => {
+      if (!p || p.donoId !== donoId) return;
+      const m = (p.data || "").slice(0, 7);
+      if (m && m < mesId) desp += Number(p.valor) || 0;
+    });
+    (state.pessoalReceitas || []).forEach((p) => {
+      if (!p || p.donoId !== donoId) return;
+      const m = (p.data || "").slice(0, 7);
+      if (m && m < mesId) rec += Number(p.valor) || 0;
+    });
+    return rec - desp;
+  }
+
+  function montarMovimentoPagamentoDivida(pag, divida, u) {
+    const dono =
+      state.pessoas.find((p) => p.id === (pag.donoId || divida.donoId)) || u;
+    const obs = String(pag.observacao || "").trim();
+    const descBase = `Dívida: ${divida.descricao || "sem nome"}`;
+    const item = {
+      id: uid(),
+      donoId: dono?.id || pag.donoId || divida.donoId,
+      donoNome: dono?.nome || divida.donoNome || "",
+      descricao: obs ? `${descBase} — ${obs}` : descBase,
+      data: pag.data,
+      tipoNome: "Dívida",
+      categoriaNome: divida.tipo || "Dívida",
+      categoria: divida.tipo || "Dívida",
+      pagamentoNome: "Pagamento de dívida",
+      pagamento: "Pagamento de dívida",
+      valor: Number(pag.valor) || 0,
+      dividaId: divida.id,
+      dividaPagamentoId: pag.id,
+      criadoPorId: pag.criadoPorId || u?.id || "",
+      criadoPorNome: pag.criadoPorNome || u?.nome || "",
+      criadoEm: pag.criadoEm || new Date().toISOString(),
+    };
+    if (pag.comprovanteUrl) {
+      item.comprovanteUrl = pag.comprovanteUrl;
+      item.comprovantePath = pag.comprovantePath || "";
+      item.comprovanteProvider = pag.comprovanteProvider || "imgbb";
+    } else if (pag.comprovanteData) {
+      item.comprovanteData = pag.comprovanteData;
+      item.comprovanteProvider = pag.comprovanteProvider || "data";
+    }
+    return item;
+  }
+
+  /** Garante que cada pagamento de dívida exista também como despesa do mês. */
+  function sincronizarMovimentosDivida(donoId = null) {
+    if (!Array.isArray(state.pessoais)) state.pessoais = [];
+    let mudou = false;
+    const pags = (state.pessoalDividaPagamentos || []).filter(
+      (p) => p && (!donoId || p.donoId === donoId)
+    );
+    pags.forEach((pag) => {
+      if ((state.pessoais || []).some((p) => p && p.dividaPagamentoId === pag.id)) return;
+      const divida = (state.pessoalDividas || []).find((d) => d && d.id === pag.dividaId);
+      if (!divida) return;
+      state.pessoais.unshift(montarMovimentoPagamentoDivida(pag, divida, usuarioAtual()));
+      mudou = true;
+    });
+    const antes = state.pessoais.length;
+    state.pessoais = state.pessoais.filter((p) => {
+      if (!p?.dividaPagamentoId) return true;
+      return (state.pessoalDividaPagamentos || []).some((x) => x && x.id === p.dividaPagamentoId);
+    });
+    if (state.pessoais.length !== antes) mudou = true;
+    return mudou;
+  }
+
+  function removerMovimentoDePagamentoDivida(pagId) {
+    if (!pagId) return;
+    state.pessoais = (state.pessoais || []).filter((p) => p.dividaPagamentoId !== pagId);
+  }
+
   function listaPagamentosDivida(dividaId) {
     return (state.pessoalDividaPagamentos || [])
       .filter((p) => p && p.dividaId === dividaId)
@@ -4889,10 +5067,14 @@
       return;
     }
     const pags = listaPagamentosDivida(divida.id);
-    pags.forEach((p) => excluirComprovanteRemoto(p));
+    pags.forEach((p) => {
+      excluirComprovanteRemoto(p);
+      removerMovimentoDePagamentoDivida(p.id);
+    });
     state.pessoalDividaPagamentos = (state.pessoalDividaPagamentos || []).filter(
       (p) => p.dividaId !== divida.id
     );
+    state.pessoais = (state.pessoais || []).filter((p) => p.dividaId !== divida.id);
     state.pessoalDividas = (state.pessoalDividas || []).filter((d) => d.id !== divida.id);
     pendingDividaPagFoto.delete(divida.id);
     const outros = idsAcompanhantesDivida(divida, usuarioAtualId);
@@ -4959,6 +5141,8 @@
 
     if (!Array.isArray(state.pessoalDividaPagamentos)) state.pessoalDividaPagamentos = [];
     state.pessoalDividaPagamentos.unshift(item);
+    if (!Array.isArray(state.pessoais)) state.pessoais = [];
+    state.pessoais.unshift(montarMovimentoPagamentoDivida(item, divida, u));
     pendingDividaPagFoto.delete(divida.id);
 
     const outros = idsAcompanhantesDivida(divida, u.id);
@@ -4975,8 +5159,10 @@
 
     saveState();
     updateNotifBadge();
+    pessoalDonoId = divida.donoId;
+    pessoalMesId = data.slice(0, 7);
     renderPessoal();
-    toast("Pagamento registrado.");
+    toast("Pagamento registrado e lançado no mês.");
   }
 
   function excluirPagamentoDivida(pagId) {
@@ -4988,7 +5174,7 @@
     if (!podeRegistrarPagamentoDivida(divida)) return toast("Sem permissão.");
     if (
       !confirm(
-        `Excluir o pagamento de ${formatMoney(pag.valor)} em ${formatDate(pag.data)}?`
+        `Excluir o pagamento de ${formatMoney(pag.valor)} em ${formatDate(pag.data)}?\nTambém remove o movimento do mês.`
       )
     ) {
       return;
@@ -4997,6 +5183,7 @@
     state.pessoalDividaPagamentos = (state.pessoalDividaPagamentos || []).filter(
       (p) => p.id !== pag.id
     );
+    removerMovimentoDePagamentoDivida(pag.id);
     const outros = idsAcompanhantesDivida(divida, u.id);
     if (outros.length) {
       notificar({
@@ -5224,6 +5411,7 @@
     fillPessoalMesSelect();
 
     const donoId = pessoalDonoId || u.id;
+    if (sincronizarMovimentosDivida(donoId) && !applyingRemote) saveState();
     if (ensurePessoalCadastros(donoId) && !applyingRemote) saveState();
 
     const podeVer = podeVerPessoalDe(donoId);
@@ -5288,15 +5476,12 @@
       if (porCatBox) porCatBox.innerHTML = "";
       return;
     }
-    const despesas = (state.pessoais || []).filter(
-      (p) => p.donoId === donoId && (p.data || "").slice(0, 7) === mesId
+    const { despesas, receitas, totalDesp, totalRec, saldoMes } = totaisPessoalMes(
+      donoId,
+      mesId
     );
-    const receitas = (state.pessoalReceitas || []).filter(
-      (p) => p.donoId === donoId && (p.data || "").slice(0, 7) === mesId
-    );
-    const totalDesp = despesas.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
-    const totalRec = receitas.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
-    const saldo = totalRec - totalDesp;
+    const saldoAnterior = saldoPessoalAnterior(donoId, mesId);
+    const saldo = saldoAnterior + saldoMes;
 
     const items = [
       ...despesas.map((d) => ({ ...d, _kind: "despesa" })),
@@ -5338,7 +5523,7 @@
     if (countEl) countEl.textContent = String(filtrados.length);
 
     if (totalBox) {
-      if (!items.length) {
+      if (!items.length && Math.abs(saldoAnterior) < 0.005) {
         totalBox.classList.add("hidden");
         totalBox.innerHTML = "";
       } else {
@@ -5350,54 +5535,36 @@
         const saldoClass =
           saldo > 0.004 ? "saldo--receber" : saldo < -0.004 ? "saldo--pagar" : "saldo--ok";
         totalBox.innerHTML = `
-          <p class="mercado-total__label">${escapeHtml(tituloLista)} · ${escapeHtml(labelMes(mesId))}</p>
+          <p class="mercado-total__label">${escapeHtml(tituloLista)} · ${escapeHtml(labelMes(mesId))} · saldo acumulado</p>
           <p class="mercado-total__valor ${saldoClass}">${formatMoney(saldo)}</p>`;
       }
     }
 
     if (resumoBox) {
-      if (!items.length) {
+      if (!items.length && Math.abs(saldoAnterior) < 0.005) {
         resumoBox.innerHTML = "";
       } else {
-        let comparativoHtml = "";
-        const prevId = mesAnteriorId(mesId);
-        if (prevId) {
-          const despPrev = (state.pessoais || []).filter(
-            (p) => p.donoId === donoId && (p.data || "").slice(0, 7) === prevId
-          );
-          const recPrev = (state.pessoalReceitas || []).filter(
-            (p) => p.donoId === donoId && (p.data || "").slice(0, 7) === prevId
-          );
-          if (despPrev.length || recPrev.length) {
-            const totalDespPrev = despPrev.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
-            const totalRecPrev = recPrev.reduce((acc, i) => acc + (Number(i.valor) || 0), 0);
-            const saldoPrev = totalRecPrev - totalDespPrev;
-            const deltaSaldo = saldo - saldoPrev;
-            const deltaDesp = totalDesp - totalDespPrev;
-            const sinalSaldo = deltaSaldo > 0.004 ? "+" : "";
-            const sinalDesp = deltaDesp > 0.004 ? "+" : "";
-            const pctDesp =
-              totalDespPrev > 0.004
-                ? ` (${sinalDesp}${((deltaDesp / totalDespPrev) * 100).toFixed(0)}%)`
-                : "";
-            const saldoClasse =
-              deltaSaldo > 0.004
-                ? "saldo--receber"
-                : deltaSaldo < -0.004
-                  ? "saldo--pagar"
-                  : "saldo--ok";
-            comparativoHtml = `
-              <div class="card-grupo card-grupo--sm" style="grid-column:1/-1">
-                <p class="card-grupo__nome">vs ${escapeHtml(labelMes(prevId))}</p>
-                <p class="card-grupo__valor ${saldoClasse}" style="font-size:0.95rem">
-                  Saldo ${sinalSaldo}${formatMoney(deltaSaldo)}
-                </p>
-                <p class="card-grupo__peso">Despesas ${sinalDesp}${formatMoney(deltaDesp)}${pctDesp}</p>
-              </div>`;
-          }
-        }
+        const saldoAntClass =
+          saldoAnterior > 0.004
+            ? "saldo--receber"
+            : saldoAnterior < -0.004
+              ? "saldo--pagar"
+              : "saldo--ok";
+        const saldoMesClass =
+          saldoMes > 0.004
+            ? "saldo--receber"
+            : saldoMes < -0.004
+              ? "saldo--pagar"
+              : "saldo--ok";
+        const saldoClass =
+          saldo > 0.004 ? "saldo--receber" : saldo < -0.004 ? "saldo--pagar" : "saldo--ok";
         resumoBox.innerHTML = `
           <div class="grupos-grid">
+            <div class="card-grupo">
+              <p class="card-grupo__nome">Saldo anterior</p>
+              <p class="card-grupo__valor ${saldoAntClass}">${formatMoney(saldoAnterior)}</p>
+              <p class="card-grupo__peso">Vem dos meses anteriores</p>
+            </div>
             <div class="card-grupo">
               <p class="card-grupo__nome">Receitas</p>
               <p class="card-grupo__valor saldo--receber">${formatMoney(totalRec)}</p>
@@ -5407,12 +5574,14 @@
               <p class="card-grupo__valor saldo--pagar">${formatMoney(totalDesp)}</p>
             </div>
             <div class="card-grupo">
-              <p class="card-grupo__nome">Saldo</p>
-              <p class="card-grupo__valor ${
-                saldo > 0.004 ? "saldo--receber" : saldo < -0.004 ? "saldo--pagar" : "saldo--ok"
-              }">${formatMoney(saldo)}</p>
+              <p class="card-grupo__nome">Movimento do mês</p>
+              <p class="card-grupo__valor ${saldoMesClass}">${formatMoney(saldoMes)}</p>
             </div>
-            ${comparativoHtml}
+            <div class="card-grupo" style="grid-column:1/-1">
+              <p class="card-grupo__nome">Saldo atual</p>
+              <p class="card-grupo__valor ${saldoClass}">${formatMoney(saldo)}</p>
+              <p class="card-grupo__peso">Anterior ${formatMoney(saldoAnterior)} + mês ${formatMoney(saldoMes)}</p>
+            </div>
           </div>`;
       }
     }
@@ -5456,7 +5625,9 @@
       box.innerHTML = "";
       empty.textContent = items.length
         ? "Nenhum lançamento com este filtro."
-        : "Nenhuma despesa ou receita neste mês.";
+        : Math.abs(saldoAnterior) >= 0.005
+          ? `Sem lançamentos neste mês. O saldo anterior (${formatMoney(saldoAnterior)}) continua valendo.`
+          : "Nenhuma despesa ou receita neste mês.";
       empty.classList.remove("hidden");
       return;
     }
@@ -5478,11 +5649,13 @@
           if (fotoBtn) acoes.push(fotoBtn);
         }
         if (podeEditarLancamentos) {
-          acoes.push(
-            `<button type="button" class="btn btn--edit btn--sm ${
-              isRec ? "btn-editar-receita" : "btn-editar-pessoal"
-            }" data-id="${item.id}" title="Editar" aria-label="Editar">✎</button>`
-          );
+          if (!item.dividaPagamentoId) {
+            acoes.push(
+              `<button type="button" class="btn btn--edit btn--sm ${
+                isRec ? "btn-editar-receita" : "btn-editar-pessoal"
+              }" data-id="${item.id}" title="Editar" aria-label="Editar">✎</button>`
+            );
+          }
           acoes.push(
             `<button type="button" class="btn btn--icon ${
               isRec ? "btn-excluir-receita" : "btn-excluir-pessoal"
@@ -5525,8 +5698,26 @@
         if (!podeLancarPessoalNoMes((item.data || "").slice(0, 7))) {
           return toast("Só é possível excluir lançamentos do mês aberto.");
         }
-        if (!confirm(`Excluir despesa "${item.descricao}" (${formatMoney(item.valor)})?`)) return;
+        const msgExtra = item.dividaPagamentoId
+          ? "\nTambém remove o pagamento na dívida."
+          : "";
+        if (
+          !confirm(
+            `Excluir despesa "${item.descricao}" (${formatMoney(item.valor)})?${msgExtra}`
+          )
+        ) {
+          return;
+        }
         if (item.comprovantePath) excluirComprovanteStorage(item.comprovantePath);
+        if (item.dividaPagamentoId) {
+          const pag = (state.pessoalDividaPagamentos || []).find(
+            (p) => p && p.id === item.dividaPagamentoId
+          );
+          if (pag) excluirComprovanteRemoto(pag);
+          state.pessoalDividaPagamentos = (state.pessoalDividaPagamentos || []).filter(
+            (p) => p.id !== item.dividaPagamentoId
+          );
+        }
         const autor = usuarioAtual();
         state.pessoais = state.pessoais.filter((p) => p.id !== item.id);
         const outros = idsParticipantesPessoal(item.donoId, autor?.id);
@@ -5612,6 +5803,9 @@
   function iniciarEdicaoPessoal(id) {
     const item = (state.pessoais || []).find((p) => p.id === id);
     if (!item) return;
+    if (item.dividaPagamentoId) {
+      return toast("Pagamento de dívida: altere ou exclua pela seção Dívidas.");
+    }
     if (!podeEditarPessoalDe(item.donoId)) return toast("Sem permissão.");
     if (!podeLancarPessoalNoMes((item.data || "").slice(0, 7))) {
       return toast("Só é possível editar lançamentos do mês aberto.");
