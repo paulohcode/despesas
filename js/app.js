@@ -9,7 +9,7 @@
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
   const VISAO_ADMIN_KEY = "despesas_visao_admin";
-  const APP_BUILD = "v75";
+  const APP_BUILD = "v76";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -85,8 +85,10 @@
   let pessoalDonoId = null;
   let pessoalMesId = todayISO().slice(0, 7);
   let pessoalBusca = "";
-  let pessoalFiltroTipo = "todos"; // todos | despesas | receitas | fixas
+  let pessoalFiltroTipo = "todos"; // todos | despesas | receitas | fixas | credito
   let pessoalFiltroCategoria = ""; // nome da categoria ou ""
+  let pessoalFiltroPagamentoTipo = ""; // dinheiro | debito | credito | ""
+  let pessoalFiltroPagamentoNome = ""; // nome da forma ou ""
   let editingMercadoId = null;
   let editingDespesaId = null;
   let editingVaquinhaId = null;
@@ -5586,6 +5588,7 @@
     const totalBox = $("#pessoal-total");
     const resumoBox = $("#pessoal-resumo-financas");
     const porCatBox = $("#pessoal-por-categoria");
+    const porPagBox = $("#pessoal-por-pagamento");
     const countEl = $("#pessoal-count");
     if (!box || !empty) return;
 
@@ -5599,6 +5602,7 @@
       totalBox?.classList.add("hidden");
       if (resumoBox) resumoBox.innerHTML = "";
       if (porCatBox) porCatBox.innerHTML = "";
+      if (porPagBox) porPagBox.innerHTML = "";
       return;
     }
     const { despesas, receitas, totalDesp, totalCredito, totalRec, saldoMes } = totaisPessoalMes(
@@ -5646,6 +5650,19 @@
         (i) =>
           i._kind === "despesa" &&
           (labelCategoriaPessoal(i) || "Sem categoria") === pessoalFiltroCategoria
+      );
+    }
+    if (pessoalFiltroPagamentoNome) {
+      filtrados = filtrados.filter(
+        (i) =>
+          i._kind === "despesa" &&
+          labelPagamentoPessoal(i) === pessoalFiltroPagamentoNome
+      );
+    } else if (pessoalFiltroPagamentoTipo) {
+      filtrados = filtrados.filter(
+        (i) =>
+          i._kind === "despesa" &&
+          tipoPagamentoPessoal(i) === pessoalFiltroPagamentoTipo
       );
     }
 
@@ -5722,6 +5739,79 @@
               <p class="card-grupo__valor ${saldoClass}">${formatMoney(saldo)}</p>
               <p class="card-grupo__peso">Anterior ${formatMoney(saldoAnterior)} + mês ${formatMoney(saldoMes)}</p>
             </div>
+          </div>`;
+      }
+    }
+
+    if (porPagBox) {
+      if (!despesas.length) {
+        porPagBox.innerHTML = "";
+      } else {
+        const ordemTipo = ["dinheiro", "debito", "credito"];
+        const mapaTipo = { dinheiro: 0, debito: 0, credito: 0 };
+        const qtdTipo = { dinheiro: 0, debito: 0, credito: 0 };
+        const mapaForma = {};
+        despesas.forEach((item) => {
+          const tipo = tipoPagamentoPessoal(item);
+          const v = Number(item.valor) || 0;
+          mapaTipo[tipo] = (mapaTipo[tipo] || 0) + v;
+          qtdTipo[tipo] = (qtdTipo[tipo] || 0) + 1;
+          const forma = labelPagamentoPessoal(item) || "—";
+          if (!mapaForma[forma]) {
+            mapaForma[forma] = { valor: 0, qtd: 0, tipo };
+          }
+          mapaForma[forma].valor += v;
+          mapaForma[forma].qtd += 1;
+        });
+        const cardsTipo = ordemTipo
+          .filter((t) => (mapaTipo[t] || 0) > 0.004)
+          .map((t) => {
+            const ativo =
+              !pessoalFiltroPagamentoNome && pessoalFiltroPagamentoTipo === t
+                ? " card-grupo--ativo"
+                : "";
+            const peso =
+              t === "credito" ? "A faturar · não abate saldo" : `${qtdTipo[t]} lançamento(s)`;
+            return `
+              <div class="card-grupo card-grupo--sm card-grupo--btn${ativo}" role="button" tabindex="0" data-pag-tipo="${t}" title="Ver contas em ${escapeHtml(labelTipoPagamento(t))}">
+                <span class="card-grupo__nome">${escapeHtml(labelTipoPagamento(t))}</span>
+                <span class="card-grupo__valor">${formatMoney(mapaTipo[t])}</span>
+                <span class="card-grupo__peso">${escapeHtml(peso)}</span>
+              </div>`;
+          })
+          .join("");
+        const formas = Object.entries(mapaForma).sort((a, b) => b[1].valor - a[1].valor);
+        const cardsForma = formas
+          .map(([nome, info]) => {
+            const ativo = pessoalFiltroPagamentoNome === nome ? " card-grupo--ativo" : "";
+            return `
+              <div class="card-grupo card-grupo--sm card-grupo--btn${ativo}" role="button" tabindex="0" data-pag-nome="${escapeHtml(nome)}" title="Ver contas em ${escapeHtml(nome)}">
+                <span class="card-grupo__nome">${escapeHtml(nome)}</span>
+                <span class="card-grupo__valor">${formatMoney(info.valor)}</span>
+                <span class="card-grupo__peso">${escapeHtml(labelTipoPagamento(info.tipo))} · ${info.qtd}</span>
+              </div>`;
+          })
+          .join("");
+        const filtroAtivo =
+          pessoalFiltroPagamentoNome || pessoalFiltroPagamentoTipo
+            ? `<button type="button" class="btn btn--ghost btn--sm btn-limpar-pag-pessoal" style="margin-top:0.45rem">
+                 Mostrando: ${escapeHtml(
+                   pessoalFiltroPagamentoNome ||
+                     labelTipoPagamento(pessoalFiltroPagamentoTipo)
+                 )} · limpar
+               </button>`
+            : `<p class="fieldset__hint" style="margin:0.4rem 0 0">Toque num card para ver só as contas daquele tipo ou forma.</p>`;
+        porPagBox.innerHTML = `
+          <div class="card-resumo card-resumo--compacto">
+            <p class="card-resumo__label">Contas por tipo de pagamento</p>
+            <div class="grupos-grid grupos-grid--2" style="margin-top:0.55rem">
+              ${cardsTipo}
+            </div>
+            <p class="card-resumo__label" style="margin-top:0.85rem">Por forma cadastrada</p>
+            <div class="grupos-grid grupos-grid--2" style="margin-top:0.55rem">
+              ${cardsForma}
+            </div>
+            ${filtroAtivo}
           </div>`;
       }
     }
@@ -6078,6 +6168,59 @@
       card.click();
     });
 
+    $("#pessoal-por-pagamento")?.addEventListener("click", (e) => {
+      const limpar = e.target.closest(".btn-limpar-pag-pessoal");
+      if (limpar) {
+        pessoalFiltroPagamentoTipo = "";
+        pessoalFiltroPagamentoNome = "";
+        renderPessoal();
+        toast("Filtro de pagamento removido.");
+        return;
+      }
+      const card = e.target.closest(".card-grupo--btn");
+      if (!card) return;
+      const tipo = card.getAttribute("data-pag-tipo") || "";
+      const nome = card.getAttribute("data-pag-nome") || "";
+      if (!tipo && !nome) return;
+
+      if (pessoalFiltroTipo === "receitas") {
+        pessoalFiltroTipo = "despesas";
+        const sel = $("#pessoal-filtro-tipo");
+        if (sel) sel.value = "despesas";
+      }
+
+      if (nome) {
+        if (pessoalFiltroPagamentoNome === nome) {
+          pessoalFiltroPagamentoNome = "";
+          pessoalFiltroPagamentoTipo = "";
+          toast("Filtro de pagamento removido.");
+        } else {
+          pessoalFiltroPagamentoNome = nome;
+          pessoalFiltroPagamentoTipo = "";
+          toast(`Filtrando: ${nome}`);
+        }
+      } else if (tipo) {
+        if (!pessoalFiltroPagamentoNome && pessoalFiltroPagamentoTipo === tipo) {
+          pessoalFiltroPagamentoTipo = "";
+          toast("Filtro de pagamento removido.");
+        } else {
+          pessoalFiltroPagamentoTipo = tipo;
+          pessoalFiltroPagamentoNome = "";
+          toast(`Filtrando: ${labelTipoPagamento(tipo)}`);
+        }
+      }
+      renderPessoal();
+      $("#lista-pessoal")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+
+    $("#pessoal-por-pagamento")?.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const card = e.target.closest(".card-grupo--btn");
+      if (!card) return;
+      e.preventDefault();
+      card.click();
+    });
+
     // Um menu aberto por vez (despesa / receita / cadastros / compartilhar)
     $$('#tab-pessoal details[data-acordeon="lancar"]').forEach((el) => {
       el.addEventListener("toggle", () => {
@@ -6100,6 +6243,8 @@
     $("#pessoal-mes")?.addEventListener("change", (e) => {
       pessoalMesId = e.target.value || currentMonthId();
       pessoalFiltroCategoria = "";
+      pessoalFiltroPagamentoTipo = "";
+      pessoalFiltroPagamentoNome = "";
       limparEdicaoPessoal();
       limparEdicaoReceita();
       limparEdicaoFixa(pessoalDonoId || usuarioAtualId);
@@ -6113,7 +6258,11 @@
 
     $("#pessoal-filtro-tipo")?.addEventListener("change", (e) => {
       pessoalFiltroTipo = e.target.value || "todos";
-      if (pessoalFiltroTipo === "receitas") pessoalFiltroCategoria = "";
+      if (pessoalFiltroTipo === "receitas") {
+        pessoalFiltroCategoria = "";
+        pessoalFiltroPagamentoTipo = "";
+        pessoalFiltroPagamentoNome = "";
+      }
       renderPessoal();
     });
 
