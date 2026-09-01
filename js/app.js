@@ -9,7 +9,7 @@
   const CASA_PADRAO = "familia-silva";
   const ADMIN_NOME = "paulo";
   const VISAO_ADMIN_KEY = "despesas_visao_admin";
-  const APP_BUILD = "v76";
+  const APP_BUILD = "v77";
   const DEFAULT_GRUPOS = [
     { id: "g1", nome: "Paulo / esposa / filhos", peso: 3.0 },
     { id: "g2", nome: "Mãe / irmão / avô", peso: 3.0 },
@@ -513,6 +513,30 @@
     return !placeholder && Boolean(cfg.databaseURL);
   }
 
+  /** Traduz erros comuns do Firebase para orientar o usuário. */
+  function mensagemErroFirebase(err) {
+    const code = String(err?.code || "");
+    const msg = String(err?.message || err || "");
+    const texto = `${code} ${msg}`.toLowerCase();
+    if (
+      texto.includes("permission_denied") ||
+      texto.includes("permission denied") ||
+      texto.includes("client doesn't have permission")
+    ) {
+      return "Permissão negada — publique as regras do Realtime Database (veja database.rules.json)";
+    }
+    if (texto.includes("network") || texto.includes("offline")) {
+      return "Sem conexão com o Firebase";
+    }
+    if (texto.includes("disconnected") || texto.includes("expired")) {
+      return "Conexão com o Firebase expirou — tente de novo";
+    }
+    if (texto.includes("data too large") || texto.includes("payload")) {
+      return "Dados grandes demais para enviar — remova fotos locais ou use ImgBB";
+    }
+    return msg || "Falha na sincronização";
+  }
+
   function normalizarCodigoCasa(raw) {
     return String(raw || "")
       .trim()
@@ -797,8 +821,9 @@
           })
           .catch((err2) => {
             console.error("pushToCloud retry:", err2);
-            setSyncStatus("error", err2.message || err.message || "Falha ao enviar");
-            toast("Falha ao salvar na nuvem. Atualize o app (Config deve mostrar v56).");
+            const detalhe = mensagemErroFirebase(err2);
+            setSyncStatus("error", detalhe);
+            toast(`Falha ao salvar na nuvem: ${detalhe}`);
           });
       });
   }
@@ -916,11 +941,11 @@
         })
         .catch((err) => {
           console.error(err);
-          setSyncStatus("error", err.message || "Falha na conexão");
+          setSyncStatus("error", mensagemErroFirebase(err));
         });
     } catch (err) {
       console.error(err);
-      setSyncStatus("error", err.message || "Firebase inválido");
+      setSyncStatus("error", mensagemErroFirebase(err));
       return Promise.resolve();
     }
   }
@@ -9811,6 +9836,10 @@
       if (!navigator.onLine) return toast("Sem internet no momento.");
       await startSync(codigoCasa);
       await pushToCloud();
+      if (syncStatus === "error") {
+        toast($("#config-sync-status")?.textContent || "Erro ao sincronizar.");
+        return;
+      }
       toast("Sincronização concluída.");
     });
 

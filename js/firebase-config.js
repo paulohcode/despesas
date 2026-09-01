@@ -1,17 +1,12 @@
 /**
  * Projeto Firebase: despesas-9975a
  *
- * Regras (Realtime Database → aba Regras) — publique:
- * {
- *   "rules": {
- *     "casas": {
- *       "$codigo": {
- *         ".read": true,
- *         ".write": true
- *       }
- *     }
- *   }
- * }
+ * Regras do Realtime Database (OBRIGATÓRIO para sync funcionar):
+ * 1) Abra https://console.firebase.google.com/project/despesas-9975a/database
+ * 2) Aba "Regras" → cole o conteúdo de database.rules.json (na raiz deste repo)
+ * 3) Clique em "Publicar"
+ *
+ * Sem isso o app mostra "Erro sync / Permission denied".
  *
  * Fotos de comprovante: ImgBB (não usa Firebase Storage / Blaze).
  * 1) Crie conta em https://imgbb.com

@@ -1,0 +1,10 @@
+{
+  "rules": {
+    "casas": {
+      "$codigo": {
+        ".read": true,
+        ".write": true
+      }
+    }
+  }
+}
